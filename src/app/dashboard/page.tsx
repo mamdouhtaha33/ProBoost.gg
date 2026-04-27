@@ -2,17 +2,20 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { formatPrice, timeAgo } from "@/lib/utils";
-import { OrderStatusPill } from "@/components/order-status-pill";
+import {
+  OrderStatusPill,
+  PaymentStatusPill,
+} from "@/components/order-status-pill";
 import { BecomeProButton } from "@/components/become-pro-button";
-import { ArrowRight, Crosshair } from "lucide-react";
+import { ArrowRight, ChevronRight, Crosshair } from "lucide-react";
 
 export default async function DashboardOverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ orderId?: string }>;
+  searchParams: Promise<{ orderId?: string; applied?: string }>;
 }) {
   const session = (await auth())!;
-  const { orderId } = await searchParams;
+  const { orderId, applied } = await searchParams;
 
   const orders = await prisma.order.findMany({
     where: { customerId: session.user.id },
@@ -35,6 +38,13 @@ export default async function DashboardOverviewPage({
         </p>
       </div>
 
+      {applied === "1" && (
+        <div className="card border-[color:var(--accent)]/30 bg-[color:var(--accent)]/5 p-4 text-sm">
+          Pro application submitted — we&apos;ll notify you when it&apos;s
+          reviewed.
+        </div>
+      )}
+
       {justPlaced && (
         <div className="card flex items-start gap-3 border-[color:var(--success)]/40 p-4">
           <div className="mt-0.5 size-2 rounded-full bg-[color:var(--success)] shadow-[0_0_8px_var(--success)]" />
@@ -52,9 +62,11 @@ export default async function DashboardOverviewPage({
       {session.user.role === "USER" && (
         <div className="card flex flex-col items-start justify-between gap-4 p-5 sm:flex-row sm:items-center">
           <div>
-            <div className="font-medium">Are you a top-tier ARC Raiders player?</div>
+            <div className="font-medium">
+              Are you a top-tier ARC Raiders player?
+            </div>
             <p className="text-sm text-[color:var(--muted)]">
-              Upgrade your account to Pro to bid on open orders.
+              Apply for a Pro account to bid on open orders.
             </p>
           </div>
           <BecomeProButton />
@@ -91,23 +103,28 @@ export default async function DashboardOverviewPage({
         ) : (
           <ul className="divide-y divide-[color:var(--border)]">
             {orders.map((o) => (
-              <li
-                key={o.id}
-                className="grid items-center gap-3 px-5 py-4 sm:grid-cols-[1fr_auto_auto_auto]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{o.title}</div>
-                  <div className="truncate text-xs text-[color:var(--muted)]">
-                    {timeAgo(o.createdAt)} · {o._count.bids} bid
-                    {o._count.bids === 1 ? "" : "s"}
-                    {o.pro ? ` · Assigned to ${o.pro.name ?? o.pro.email}` : ""}
+              <li key={o.id}>
+                <Link
+                  href={`/dashboard/orders/${o.id}`}
+                  className="grid items-center gap-3 px-5 py-4 transition-colors hover:bg-white/[0.02] sm:grid-cols-[1fr_auto_auto_auto_auto]"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{o.title}</div>
+                    <div className="truncate text-xs text-[color:var(--muted)]">
+                      {timeAgo(o.createdAt)} · {o._count.bids} bid
+                      {o._count.bids === 1 ? "" : "s"}
+                      {o.pro
+                        ? ` · Assigned to ${o.pro.name ?? o.pro.email}`
+                        : ""}
+                    </div>
                   </div>
-                </div>
-                <OrderStatusPill status={o.status} />
-                <div className="font-mono text-sm">
-                  {formatPrice(o.finalPrice ?? o.basePrice)}
-                </div>
-                <div />
+                  <PaymentStatusPill status={o.paymentStatus} />
+                  <OrderStatusPill status={o.status} />
+                  <div className="font-mono text-sm">
+                    {formatPrice(o.finalPrice ?? o.basePrice)}
+                  </div>
+                  <ChevronRight className="size-4 text-[color:var(--muted)]" />
+                </Link>
               </li>
             ))}
           </ul>

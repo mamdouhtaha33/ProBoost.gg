@@ -21,9 +21,15 @@ export function SiteFooter() {
         <div className="text-sm">
           <div className="mb-2 font-medium">Company</div>
           <ul className="space-y-1.5 text-[color:var(--muted)]">
-            <li>About</li>
-            <li>Become a Pro</li>
-            <li>Support</li>
+            <li>
+              <a href="/games" className="hover:text-white">All games</a>
+            </li>
+            <li>
+              <a href="/dashboard/pro/apply" className="hover:text-white">Become a Pro</a>
+            </li>
+            <li>
+              <a href="/faq" className="hover:text-white">FAQ &amp; Support</a>
+            </li>
           </ul>
         </div>
       </div>

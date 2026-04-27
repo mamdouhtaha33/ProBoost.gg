@@ -1,11 +1,36 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { acceptBid } from "@/app/actions/orders";
+import {
+  decideRefund,
+} from "@/app/actions/refunds";
+import {
+  manuallyAssignPro,
+  setInternalNotes,
+  updateOrderStatus,
+} from "@/app/actions/admin";
 import { formatPrice, formatDate, timeAgo } from "@/lib/utils";
-import { OrderStatusPill, BidStatusPill } from "@/components/order-status-pill";
+import {
+  OrderStatusPill,
+  BidStatusPill,
+  PaymentStatusPill,
+} from "@/components/order-status-pill";
+import { OrderTimeline } from "@/components/order-timeline";
+import { OrderChat } from "@/components/order-chat";
 import { ArrowLeft, Check, ShieldCheck } from "lucide-react";
-import type { Prisma } from "@prisma/client";
+
+const ALL_STATUSES = [
+  "OPEN",
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "DELIVERED",
+  "COMPLETED",
+  "CANCELLED",
+  "REFUND_REVIEW",
+  "REFUNDED",
+] as const;
 
 export default async function AdminOrderDetailPage({
   params,
@@ -18,13 +43,35 @@ export default async function AdminOrderDetailPage({
     include: {
       customer: true,
       pro: true,
+      payment: true,
       bids: {
         orderBy: [{ status: "asc" }, { amount: "asc" }],
         include: { pro: true },
       },
+      activities: {
+        orderBy: { createdAt: "desc" },
+        include: { actor: { select: { name: true, email: true, image: true } } },
+      },
+      conversation: {
+        include: {
+          messages: {
+            orderBy: { createdAt: "asc" },
+            include: {
+              sender: { select: { name: true, email: true, image: true, role: true } },
+            },
+          },
+        },
+      },
     },
   });
   if (!order) return notFound();
+
+  const pros = await prisma.user.findMany({
+    where: { OR: [{ role: "PRO" }, { role: "ADMIN" }] },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, name: true, email: true },
+    take: 200,
+  });
 
   const opts = (order.options ?? {}) as Prisma.JsonObject;
   const isOpen = order.status === "OPEN";
@@ -41,9 +88,10 @@ export default async function AdminOrderDetailPage({
       <div className="card p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-[color:var(--muted)]">
+            <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-wider text-[color:var(--muted)]">
               {order.service}
               <OrderStatusPill status={order.status} />
+              <PaymentStatusPill status={order.paymentStatus} />
             </div>
             <h1 className="mt-2 text-2xl font-semibold">{order.title}</h1>
             <div className="mt-1 text-sm text-[color:var(--muted)]">
@@ -94,12 +142,92 @@ export default async function AdminOrderDetailPage({
         )}
       </div>
 
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="card p-5">
+          <div className="font-medium">Status</div>
+          <form action={updateOrderStatus} className="mt-3 flex gap-2">
+            <input type="hidden" name="orderId" value={order.id} />
+            <select name="status" defaultValue={order.status} className="input-base">
+              {ALL_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s.replace(/_/g, " ")}
+                </option>
+              ))}
+            </select>
+            <button className="btn-primary rounded-md px-3 py-1.5 text-sm font-medium">
+              Update
+            </button>
+          </form>
+        </div>
+
+        <div className="card p-5">
+          <div className="font-medium">Manual assignment</div>
+          <form action={manuallyAssignPro} className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+            <input type="hidden" name="orderId" value={order.id} />
+            <select name="proId" className="input-base" defaultValue={order.proId ?? ""}>
+              <option value="">Select Pro…</option>
+              {pros.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name ?? p.email}
+                </option>
+              ))}
+            </select>
+            <input
+              name="finalPrice"
+              type="number"
+              min={0}
+              defaultValue={(order.finalPrice ?? order.basePrice) || 0}
+              className="input-base font-mono"
+              placeholder="Final (cents)"
+            />
+            <button className="btn-primary rounded-md px-3 py-1.5 text-sm font-medium">
+              Assign
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {order.refundRequestStatus === "REQUESTED" && (
+        <div className="card border-orange-400/30 bg-orange-400/5 p-5">
+          <div className="font-medium">Refund / cancellation request</div>
+          <p className="mt-2 text-sm text-[color:var(--muted)]">
+            Customer reason: {order.cancellationReason ?? "—"}
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <form action={decideRefund} className="space-y-2">
+              <input type="hidden" name="orderId" value={order.id} />
+              <input type="hidden" name="decision" value="APPROVE" />
+              <input
+                name="note"
+                placeholder="Note for customer (optional)"
+                className="input-base"
+              />
+              <button className="btn-primary w-full rounded-md px-3 py-1.5 text-sm font-medium">
+                Approve refund
+              </button>
+            </form>
+            <form action={decideRefund} className="space-y-2">
+              <input type="hidden" name="orderId" value={order.id} />
+              <input type="hidden" name="decision" value="REJECT" />
+              <input
+                name="note"
+                placeholder="Reason (optional)"
+                className="input-base"
+              />
+              <button className="btn-ghost w-full rounded-md px-3 py-1.5 text-sm">
+                Reject
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="card overflow-hidden">
         <div className="flex items-center justify-between border-b border-[color:var(--border)] px-5 py-4">
           <div className="font-medium">Bids ({order.bids.length})</div>
           {!isOpen && (
             <div className="text-xs text-[color:var(--muted)]">
-              Bidding closed — order is {order.status.toLowerCase().replace("_", " ")}.
+              Bidding closed — order is {order.status.toLowerCase().replace(/_/g, " ")}.
             </div>
           )}
         </div>
@@ -128,11 +256,8 @@ export default async function AdminOrderDetailPage({
                 {isOpen && b.status === "PENDING" ? (
                   <form action={acceptBid}>
                     <input type="hidden" name="bidId" value={b.id} />
-                    <button
-                      type="submit"
-                      className="btn-primary inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium"
-                    >
-                      <Check className="size-3.5" /> Accept
+                    <button className="btn-primary inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium">
+                      <Check className="size-4" /> Accept
                     </button>
                   </form>
                 ) : (
@@ -143,6 +268,41 @@ export default async function AdminOrderDetailPage({
           </ul>
         )}
       </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="card p-5">
+          <div className="mb-3 font-medium">Internal notes</div>
+          <form action={setInternalNotes} className="space-y-2">
+            <input type="hidden" name="orderId" value={order.id} />
+            <textarea
+              name="note"
+              rows={4}
+              defaultValue={order.internalNotes ?? ""}
+              className="input-base w-full"
+              placeholder="Visible to admins only…"
+            />
+            <button className="btn-primary rounded-md px-3 py-1.5 text-sm font-medium">
+              Save notes
+            </button>
+          </form>
+        </div>
+
+        <div className="card overflow-hidden">
+          <div className="border-b border-[color:var(--border)] px-5 py-4 font-medium">
+            Activity
+          </div>
+          <OrderTimeline activities={order.activities} showInternal />
+        </div>
+      </div>
+
+      <section className="card p-5">
+        <div className="mb-3 font-medium">Messages</div>
+        <OrderChat
+          orderId={order.id}
+          messages={order.conversation?.messages ?? []}
+          canPostInternal
+        />
+      </section>
     </div>
   );
 }
