@@ -1,6 +1,3 @@
-// Prisma schema for ARC Raiders Marketplace
-// Models: User (with Role enum), Account/Session (NextAuth), Order, Bid
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -20,8 +17,11 @@ enum OrderStatus {
   OPEN
   ASSIGNED
   IN_PROGRESS
+  DELIVERED
   COMPLETED
   CANCELLED
+  REFUND_REVIEW
+  REFUNDED
 }
 
 enum BidStatus {
@@ -31,26 +31,106 @@ enum BidStatus {
   WITHDRAWN
 }
 
-model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
-  emailVerified DateTime?
-  image         String?
-  role          Role      @default(USER)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  accounts Account[]
-  sessions Session[]
-
-  // Relationships
-  ordersPlaced  Order[] @relation("OrdersPlaced")  // Orders this user (customer) created
-  ordersClaimed Order[] @relation("OrdersClaimed") // Orders this Pro is assigned to
-  bids          Bid[]
+enum ProApplicationStatus {
+  NOT_APPLIED
+  PENDING
+  APPROVED
+  REJECTED
 }
 
-// NextAuth.js (Auth.js) standard models
+enum PaymentProvider {
+  MANUAL
+  STRIPE
+}
+
+enum PaymentStatus {
+  PENDING
+  REQUIRES_ACTION
+  PROCESSING
+  PAID
+  FAILED
+  REFUND_REQUESTED
+  REFUNDED
+  CANCELLED
+}
+
+enum TransactionKind {
+  CHARGE
+  REFUND
+  PAYOUT
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum OrderActivityType {
+  CREATED
+  PAYMENT_PENDING
+  PAYMENT_LINK_CREATED
+  PAYMENT_CONFIRMED
+  BID_PLACED
+  BID_WITHDRAWN
+  BID_ACCEPTED
+  STATUS_CHANGED
+  ASSIGNED
+  MESSAGE_SENT
+  INTERNAL_NOTE_ADDED
+  CANCELLATION_REQUESTED
+  REFUND_REQUESTED
+  REFUND_APPROVED
+  REFUND_REJECTED
+  REVIEW_LEFT
+  PRO_APPLICATION_SUBMITTED
+  PRO_APPLICATION_APPROVED
+  PRO_APPLICATION_REJECTED
+}
+
+enum RefundRequestStatus {
+  NONE
+  REQUESTED
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum ConversationParticipantRole {
+  USER
+  PRO
+  ADMIN
+  SYSTEM
+}
+
+model User {
+  id                    String                @id @default(cuid())
+  name                  String?
+  email                 String                @unique
+  emailVerified         DateTime?
+  image                 String?
+  role                  Role                  @default(USER)
+  proApplicationStatus  ProApplicationStatus  @default(NOT_APPLIED)
+  proHeadline           String?
+  proBio                String?               @db.Text
+  payoutEmail           String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  accounts              Account[]
+  sessions              Session[]
+  ordersPlaced          Order[]               @relation("OrdersPlaced")
+  ordersClaimed         Order[]               @relation("OrdersClaimed")
+  bids                  Bid[]
+  activities            OrderActivity[]       @relation("ActivityActor")
+  messagesSent          Message[]             @relation("MessageSender")
+  reviewsWritten        Review[]              @relation("ReviewAuthor")
+  reviewsReceived       Review[]              @relation("ReviewRecipient")
+  proApplication        ProApplication?
+}
+
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -86,52 +166,189 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// Marketplace models
 model Order {
-  id          String      @id @default(cuid())
-  customerId  String
-  proId       String?     // Locked Pro after admin accepts a bid
-  acceptedBidId String?   @unique
+  id                    String               @id @default(cuid())
+  customerId            String
+  proId                 String?
+  acceptedBidId         String?              @unique
+  service               String
+  game                  String               @default("ARC Raiders")
+  title                 String
+  description           String               @db.Text
+  options               Json
+  basePrice             Int
+  finalPrice            Int?
+  currency              String               @default("USD")
+  paymentProvider       PaymentProvider      @default(MANUAL)
+  paymentStatus         PaymentStatus        @default(PENDING)
+  refundRequestStatus   RefundRequestStatus  @default(NONE)
+  internalNotes         String?              @db.Text
+  cancellationReason    String?              @db.Text
+  customerRequestedAt   DateTime?
+  refundedAt            DateTime?
+  status                OrderStatus          @default(OPEN)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
 
-  // Service details
-  service     String      // e.g. "ARC Raiders: Boost", "ARC Raiders: Coaching"
-  game        String      @default("ARC Raiders")
-  title       String
-  description String      @db.Text
-
-  // Dynamic pricing form snapshot
-  options     Json        // { tier, region, currentRank, targetRank, addons, ... }
-  basePrice   Int         // cents
-  finalPrice  Int?        // cents — set when admin accepts a bid
-
-  status      OrderStatus @default(OPEN)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  customer User  @relation("OrdersPlaced",  fields: [customerId], references: [id])
-  pro      User? @relation("OrdersClaimed", fields: [proId],      references: [id])
-  bids     Bid[]
+  customer              User                 @relation("OrdersPlaced", fields: [customerId], references: [id])
+  pro                   User?                @relation("OrdersClaimed", fields: [proId], references: [id])
+  bids                  Bid[]
+  payment               Payment?
+  transactions          Transaction[]
+  activities            OrderActivity[]
+  conversation          Conversation?
+  review                Review?
 
   @@index([status])
   @@index([customerId])
   @@index([proId])
+  @@index([paymentStatus])
+  @@index([refundRequestStatus])
 }
 
 model Bid {
   id        String    @id @default(cuid())
   orderId   String
   proId     String
-  amount    Int       // cents
+  amount    Int
   message   String?   @db.Text
   status    BidStatus @default(PENDING)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  pro   User  @relation(fields: [proId],   references: [id], onDelete: Cascade)
+  pro   User  @relation(fields: [proId], references: [id], onDelete: Cascade)
 
-  @@unique([orderId, proId]) // One active bid per Pro per order
+  @@unique([orderId, proId])
   @@index([orderId])
   @@index([proId])
+  @@index([status])
+}
+
+model Payment {
+  id                String           @id @default(cuid())
+  orderId           String           @unique
+  provider          PaymentProvider  @default(MANUAL)
+  status            PaymentStatus    @default(PENDING)
+  amount            Int
+  currency          String           @default("USD")
+  providerRef       String?
+  checkoutUrl       String?
+  lastError         String?          @db.Text
+  metadata          Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  paidAt            DateTime?
+
+  order             Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  transactions      Transaction[]
+
+  @@index([status])
+  @@index([provider])
+}
+
+model Transaction {
+  id                String             @id @default(cuid())
+  orderId           String
+  paymentId         String?
+  kind              TransactionKind
+  status            TransactionStatus  @default(PENDING)
+  amount            Int
+  currency          String             @default("USD")
+  providerRef       String?
+  description       String?
+  metadata          Json?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  order             Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payment           Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([status])
+  @@index([kind])
+}
+
+model OrderActivity {
+  id          String                @id @default(cuid())
+  orderId     String
+  actorUserId String?
+  type        OrderActivityType
+  message     String                @db.Text
+  metadata    Json?
+  visibleToPro Boolean              @default(true)
+  visibleToUser Boolean             @default(true)
+  createdAt   DateTime              @default(now())
+
+  order       Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  actor       User?                 @relation("ActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([actorUserId])
+  @@index([type])
+}
+
+model Conversation {
+  id         String      @id @default(cuid())
+  orderId     String      @unique
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  messages   Message[]
+}
+
+model Message {
+  id          String                      @id @default(cuid())
+  conversationId String
+  senderId    String?
+  senderRole  ConversationParticipantRole
+  body        String                      @db.Text
+  isInternal  Boolean                     @default(false)
+  createdAt   DateTime                    @default(now())
+
+  conversation Conversation               @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender      User?                       @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+model Review {
+  id          String   @id @default(cuid())
+  orderId      String   @unique
+  authorId     String
+  recipientId  String
+  rating       Int
+  title        String?
+  body         String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  author       User     @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  recipient    User     @relation("ReviewRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([authorId])
+  @@index([recipientId])
+}
+
+model ProApplication {
+  id          String                @id @default(cuid())
+  userId       String                @unique
+  status       ProApplicationStatus  @default(PENDING)
+  headline     String
+  bio          String                @db.Text
+  experience   String?               @db.Text
+  availability String?
+  adminNotes   String?               @db.Text
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([status])
 }
