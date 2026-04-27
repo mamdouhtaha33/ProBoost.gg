@@ -1,26 +1,168 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07080c;
+  --foreground: #e6e8ee;
+  --card: #0d1018;
+  --card-2: #11141d;
+  --border: #1f2330;
+  --muted: #8a91a3;
+  --primary: #4db8ff;
+  --primary-glow: #8fd7ff;
+  --accent: #86f5ff;
+  --danger: #ff4d6d;
+  --success: #22c55e;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-2: var(--card-2);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-glow: var(--primary-glow);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  min-height: 100%;
+}
+
+body {
+  background-image:
+    radial-gradient(
+      ellipse 80% 60% at 50% -20%,
+      rgba(77, 184, 255, 0.2),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 100% 0%,
+      rgba(112, 245, 255, 0.14),
+      transparent 60%
+    ),
+    linear-gradient(180deg, #07080c 0%, #05060a 100%);
+  background-attachment: fixed;
+}
+
+/* Subtle scanline overlay for gaming feel */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.012) 0px,
+    rgba(255, 255, 255, 0.012) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  z-index: 1;
+}
+
+::selection {
+  background: rgba(77, 184, 255, 0.35);
+  color: #fff;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0c12;
+}
+::-webkit-scrollbar-thumb {
+  background: #1c2030;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a3045;
+}
+
+/* Utility classes for the gaming feel */
+.glass {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.03),
+    rgba(255, 255, 255, 0.01)
+  );
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+
+.glow-primary {
+  box-shadow:
+    0 0 0 1px rgba(77, 184, 255, 0.4),
+    0 0 30px -5px rgba(77, 184, 255, 0.55);
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, #d8f3ff 0%, #8fd7ff 25%, #4db8ff 60%, #a6ecff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, #76ceff, #2f9be9);
+  color: #03111e;
+  border: 1px solid rgba(143, 215, 255, 0.45);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.2) inset,
+    0 0 25px -8px rgba(77, 184, 255, 0.65);
+  transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+}
+.btn-primary:hover {
+  filter: brightness(1.08);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.25) inset,
+    0 0 35px -6px rgba(77, 184, 255, 0.75);
+}
+.btn-primary:active {
+  transform: translateY(1px);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: #2a3045;
+}
+
+.card {
+  background: linear-gradient(180deg, var(--card), var(--card-2));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.input-base {
+  background: #0a0d15;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  border-radius: 10px;
+  padding: 0.625rem 0.875rem;
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  width: 100%;
+}
+.input-base:focus {
+  border-color: rgba(77, 184, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(77, 184, 255, 0.18);
 }

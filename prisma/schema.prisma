@@ -1,0 +1,137 @@
+// Prisma schema for ARC Raiders Marketplace
+// Models: User (with Role enum), Account/Session (NextAuth), Order, Bid
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  PRO
+  ADMIN
+}
+
+enum OrderStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum BidStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+
+  // Relationships
+  ordersPlaced  Order[] @relation("OrdersPlaced")  // Orders this user (customer) created
+  ordersClaimed Order[] @relation("OrdersClaimed") // Orders this Pro is assigned to
+  bids          Bid[]
+}
+
+// NextAuth.js (Auth.js) standard models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Marketplace models
+model Order {
+  id          String      @id @default(cuid())
+  customerId  String
+  proId       String?     // Locked Pro after admin accepts a bid
+  acceptedBidId String?   @unique
+
+  // Service details
+  service     String      // e.g. "ARC Raiders: Boost", "ARC Raiders: Coaching"
+  game        String      @default("ARC Raiders")
+  title       String
+  description String      @db.Text
+
+  // Dynamic pricing form snapshot
+  options     Json        // { tier, region, currentRank, targetRank, addons, ... }
+  basePrice   Int         // cents
+  finalPrice  Int?        // cents — set when admin accepts a bid
+
+  status      OrderStatus @default(OPEN)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  customer User  @relation("OrdersPlaced",  fields: [customerId], references: [id])
+  pro      User? @relation("OrdersClaimed", fields: [proId],      references: [id])
+  bids     Bid[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([proId])
+}
+
+model Bid {
+  id        String    @id @default(cuid())
+  orderId   String
+  proId     String
+  amount    Int       // cents
+  message   String?   @db.Text
+  status    BidStatus @default(PENDING)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  pro   User  @relation(fields: [proId],   references: [id], onDelete: Cascade)
+
+  @@unique([orderId, proId]) // One active bid per Pro per order
+  @@index([orderId])
+  @@index([proId])
+  @@index([status])
+}
