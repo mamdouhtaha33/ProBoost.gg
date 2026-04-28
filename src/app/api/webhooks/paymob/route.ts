@@ -50,10 +50,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
 
-  if (process.env.PAYMOB_HMAC_SECRET) {
-    if (!verifyPaymobHmac(body, hmacHeader)) {
-      return NextResponse.json({ ok: false, error: "bad hmac" }, { status: 400 });
-    }
+  if (!process.env.PAYMOB_HMAC_SECRET) {
+    return NextResponse.json(
+      { ok: false, error: "paymob webhook misconfigured" },
+      { status: 500 },
+    );
+  }
+  if (!verifyPaymobHmac(body, hmacHeader)) {
+    return NextResponse.json({ ok: false, error: "bad hmac" }, { status: 400 });
   }
 
   const obj = (body.obj ?? {}) as Record<string, unknown>;

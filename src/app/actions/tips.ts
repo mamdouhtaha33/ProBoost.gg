@@ -29,29 +29,41 @@ export async function tipPro(_prev: TipState | undefined, formData: FormData): P
   if (order.status !== "COMPLETED") return { ok: false, error: "You can only tip after completion." };
   if (order.tip) return { ok: false, error: "Tip already left for this order." };
 
-  await prisma.$transaction(async (tx) => {
-    await tx.tip.create({
-      data: {
-        orderId,
-        fromUserId: session.user!.id!,
-        toUserId: order.proId!,
+  try {
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.tip.findUnique({ where: { orderId } });
+      if (existing) {
+        throw new Error("TIP_EXISTS");
+      }
+      await tx.tip.create({
+        data: {
+          orderId,
+          fromUserId: session.user!.id!,
+          toUserId: order.proId!,
+          amountCents,
+          message,
+          status: "PAID",
+        },
+      });
+      await tx.order.update({
+        where: { id: orderId },
+        data: { tipAmountCents: amountCents },
+      });
+      await appendWalletEntry(tx, {
+        userId: order.proId!,
+        kind: "TIP_RECEIVED",
         amountCents,
-        message,
-        status: "PAID",
-      },
+        orderId,
+        description: `Tip from ${session.user!.name ?? "customer"}`,
+      });
     });
-    await tx.order.update({
-      where: { id: orderId },
-      data: { tipAmountCents: amountCents },
-    });
-    await appendWalletEntry(tx, {
-      userId: order.proId!,
-      kind: "TIP_RECEIVED",
-      amountCents,
-      orderId,
-      description: `Tip from ${session.user!.name ?? "customer"}`,
-    });
-  });
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    if (e?.code === "P2002" || e?.message === "TIP_EXISTS") {
+      return { ok: false, error: "Tip already left for this order." };
+    }
+    throw err;
+  }
 
   await logActivityNow({
     orderId,

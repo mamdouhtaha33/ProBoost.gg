@@ -58,7 +58,7 @@ export async function createOffer(formData: FormData) {
       popular,
       status,
       categoryId: category?.id ?? null,
-      badge: hot ? "HOT" : popular ? "POPULAR" : salePriceCents ? "SALE" : "NONE",
+      badge: hot ? "HOT" : popular ? "POPULAR" : salePriceCents != null ? "SALE" : "NONE",
     },
   });
   await audit({

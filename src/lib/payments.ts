@@ -21,7 +21,9 @@ const STRIPE_ENABLED =
   !!process.env.STRIPE_SECRET_KEY && !!process.env.STRIPE_WEBHOOK_SECRET;
 
 const PAYMOB_ENABLED =
-  !!process.env.PAYMOB_API_KEY && !!process.env.PAYMOB_INTEGRATION_ID;
+  !!process.env.PAYMOB_API_KEY &&
+  !!process.env.PAYMOB_INTEGRATION_ID &&
+  !!process.env.PAYMOB_HMAC_SECRET;
 
 export function listAvailableProviders(): PaymentProvider[] {
   const list: PaymentProvider[] = ["MANUAL"];
