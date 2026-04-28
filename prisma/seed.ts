@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { computeBasePriceFor, defaultOrderTitle, getGameBySlug } from "../src/lib/games";
+import { DEFAULT_TIERS } from "../src/lib/cashback";
 
 const prisma = new PrismaClient();
 
@@ -218,6 +219,328 @@ async function main() {
       tags: ["valorant", "training"],
     },
   });
+
+  // Phase-4: Cashback tiers
+  for (const [category, tiers] of Object.entries(DEFAULT_TIERS) as Array<
+    ["BOOSTING" | "CURRENCY_ACCOUNT", { name: string; thresholdCents: number; percentBasis100: number }[]]
+  >) {
+    for (let i = 0; i < tiers.length; i++) {
+      const t = tiers[i];
+      const id = `seed-cb-${category}-${i}`;
+      await prisma.cashbackTier.upsert({
+        where: { id },
+        update: { thresholdCents: t.thresholdCents, percentBasis100: t.percentBasis100, displayOrder: i * 100 },
+        create: {
+          id,
+          category,
+          name: t.name,
+          thresholdCents: t.thresholdCents,
+          percentBasis100: t.percentBasis100,
+          displayOrder: i * 100,
+        },
+      });
+    }
+  }
+
+  // Phase-4: OfferCategories
+  const categoriesByGame: Record<string, Array<{ slug: string; name: string }>> = {
+    "arc-raiders": [
+      { slug: "boosting", name: "Boosting" },
+      { slug: "raids", name: "Raids" },
+      { slug: "blueprints", name: "Blueprints" },
+      { slug: "coins", name: "Coins" },
+      { slug: "weapons", name: "Weapons" },
+    ],
+    valorant: [
+      { slug: "rank-boost", name: "Rank Boost" },
+      { slug: "placements", name: "Placements" },
+      { slug: "coaching", name: "Coaching" },
+      { slug: "accounts", name: "Accounts" },
+    ],
+    "apex-legends": [
+      { slug: "rank-boost", name: "Rank Boost" },
+      { slug: "kills", name: "Kills & Badges" },
+      { slug: "coaching", name: "Coaching" },
+    ],
+    "league-of-legends": [
+      { slug: "rank-boost", name: "Rank Boost" },
+      { slug: "placements", name: "Placements" },
+      { slug: "coaching", name: "Coaching" },
+      { slug: "accounts", name: "Accounts" },
+    ],
+    wow: [
+      { slug: "raids", name: "Raids" },
+      { slug: "dungeons", name: "Mythic+" },
+      { slug: "gold", name: "Gold" },
+      { slug: "powerleveling", name: "Powerleveling" },
+      { slug: "pvp", name: "PvP" },
+    ],
+  };
+
+  for (const [gameSlug, cats] of Object.entries(categoriesByGame)) {
+    for (let i = 0; i < cats.length; i++) {
+      const c = cats[i];
+      await prisma.offerCategory.upsert({
+        where: { gameSlug_slug: { gameSlug, slug: c.slug } },
+        update: { name: c.name, displayOrder: i * 100 },
+        create: { gameSlug, slug: c.slug, name: c.name, displayOrder: i * 100 },
+      });
+    }
+  }
+
+  // Phase-4: Offers
+  type SeedOffer = {
+    slug: string;
+    gameSlug: string;
+    categorySlug: string;
+    productType?: "BOOSTING" | "CURRENCY" | "ACCOUNT";
+    title: string;
+    summary: string;
+    features: string[];
+    basePriceCents: number;
+    salePriceCents?: number;
+    badge?: "HOT" | "POPULAR" | "NEW" | "SALE" | "NONE";
+    hot?: boolean;
+    popular?: boolean;
+    deliveryMode?: "PILOTED" | "SELF_PLAY" | "BOTH";
+    deliveryHours?: number;
+  };
+
+  const seedOffers: SeedOffer[] = [
+    {
+      slug: "arc-raiders-veteran-to-apex",
+      gameSlug: "arc-raiders",
+      categorySlug: "boosting",
+      title: "Veteran → Apex Raider Boost",
+      summary: "Push to Apex Raider in under 7 days. Top NA pros, streamed.",
+      features: ["Top 0.1% NA Pros", "Streamed on request", "Lifetime warranty"],
+      basePriceCents: 12999,
+      salePriceCents: 8999,
+      hot: true,
+      popular: true,
+      badge: "HOT",
+      deliveryMode: "BOTH",
+      deliveryHours: 168,
+    },
+    {
+      slug: "arc-raiders-blueprints-bundle",
+      gameSlug: "arc-raiders",
+      categorySlug: "blueprints",
+      productType: "CURRENCY",
+      title: "Any Blueprint",
+      summary: "Skip the grind. Any blueprint, any tier.",
+      features: ["No more RNG", "Same-day delivery", "100% safe"],
+      basePriceCents: 299,
+      badge: "POPULAR",
+      popular: true,
+      deliveryHours: 6,
+    },
+    {
+      slug: "arc-raiders-coins-pack",
+      gameSlug: "arc-raiders",
+      categorySlug: "coins",
+      productType: "CURRENCY",
+      title: "ARC Raiders Coins (Any Amount)",
+      summary: "Skip the grind. Fast & secure.",
+      features: ["Any amount", "Cheapest coins", "Instant"],
+      basePriceCents: 256,
+      salePriceCents: 179,
+      badge: "SALE",
+      deliveryHours: 1,
+    },
+    {
+      slug: "valorant-iron-to-diamond",
+      gameSlug: "valorant",
+      categorySlug: "rank-boost",
+      title: "Iron → Diamond Rank Boost",
+      summary: "Verified Immortal+ boosters. Any region.",
+      features: ["24/7 availability", "Win-rate 92%", "Lifetime warranty"],
+      basePriceCents: 14999,
+      salePriceCents: 11999,
+      hot: true,
+      badge: "HOT",
+      deliveryMode: "BOTH",
+      deliveryHours: 240,
+    },
+    {
+      slug: "valorant-account-immortal",
+      gameSlug: "valorant",
+      categorySlug: "accounts",
+      productType: "ACCOUNT",
+      title: "Valorant Immortal Account",
+      summary: "Top weapons skins, any region.",
+      features: ["Best skins", "100% safe transfer", "Reputable seller"],
+      basePriceCents: 9999,
+      badge: "POPULAR",
+      popular: true,
+    },
+    {
+      slug: "apex-rookie-to-diamond",
+      gameSlug: "apex-legends",
+      categorySlug: "rank-boost",
+      title: "Rookie → Diamond Rank Boost",
+      summary: "Predator-grade boosters, kill records included.",
+      features: ["High KDR boosters", "All platforms", "Lifetime warranty"],
+      basePriceCents: 12999,
+      hot: true,
+      badge: "HOT",
+    },
+    {
+      slug: "lol-iron-to-platinum",
+      gameSlug: "league-of-legends",
+      categorySlug: "rank-boost",
+      title: "Iron → Platinum (Solo/Duo)",
+      summary: "Pick your champ pool. Any region.",
+      features: ["Champ pool respected", "All regions", "Streamed option"],
+      basePriceCents: 9999,
+      salePriceCents: 7999,
+      badge: "SALE",
+      popular: true,
+    },
+    {
+      slug: "wow-mythic-plus-2-20",
+      gameSlug: "wow",
+      categorySlug: "dungeons",
+      title: "Mythic +2-20 Dungeons Boost",
+      summary: "259-266 ilvl Gear, 269-272 Weekly Vault.",
+      features: ["FREE Timer & Traders", "Expert party", "Quick start"],
+      basePriceCents: 939,
+      salePriceCents: 849,
+      hot: true,
+      badge: "HOT",
+    },
+    {
+      slug: "wow-gold-any-amount",
+      gameSlug: "wow",
+      categorySlug: "gold",
+      productType: "CURRENCY",
+      title: "WoW Gold (Any Amount)",
+      summary: "Cheapest gold, fast delivery.",
+      features: ["Any amount", "Fast delivery", "Cheapest gold"],
+      basePriceCents: 643,
+      popular: true,
+      badge: "POPULAR",
+    },
+  ];
+
+  for (const o of seedOffers) {
+    const cat = await prisma.offerCategory.findUnique({
+      where: { gameSlug_slug: { gameSlug: o.gameSlug, slug: o.categorySlug } },
+    });
+    await prisma.offer.upsert({
+      where: { slug: o.slug },
+      update: {
+        title: o.title,
+        summary: o.summary,
+        features: o.features,
+        basePriceCents: o.basePriceCents,
+        salePriceCents: o.salePriceCents ?? null,
+        productType: o.productType ?? "BOOSTING",
+        deliveryMode: o.deliveryMode ?? "BOTH",
+        deliveryHours: o.deliveryHours,
+        hot: !!o.hot,
+        popular: !!o.popular,
+        badge: o.badge ?? "NONE",
+        status: "PUBLISHED",
+        categoryId: cat?.id ?? null,
+        gameSlug: o.gameSlug,
+      },
+      create: {
+        slug: o.slug,
+        title: o.title,
+        summary: o.summary,
+        features: o.features,
+        basePriceCents: o.basePriceCents,
+        salePriceCents: o.salePriceCents ?? null,
+        productType: o.productType ?? "BOOSTING",
+        deliveryMode: o.deliveryMode ?? "BOTH",
+        deliveryHours: o.deliveryHours,
+        hot: !!o.hot,
+        popular: !!o.popular,
+        badge: o.badge ?? "NONE",
+        status: "PUBLISHED",
+        categoryId: cat?.id ?? null,
+        gameSlug: o.gameSlug,
+      },
+    });
+  }
+
+  // Phase-4: Sample coupons
+  await prisma.coupon.upsert({
+    where: { code: "WELCOME10" },
+    update: {},
+    create: {
+      code: "WELCOME10",
+      type: "PERCENT",
+      valuePercent: 10,
+      scope: "GLOBAL",
+      maxUses: null,
+      perUserLimit: 1,
+      status: "ACTIVE",
+      description: "10% off your first order",
+    },
+  });
+  await prisma.coupon.upsert({
+    where: { code: "SAVE5" },
+    update: {},
+    create: {
+      code: "SAVE5",
+      type: "FIXED",
+      valueCents: 500,
+      scope: "GLOBAL",
+      perUserLimit: 1,
+      status: "ACTIVE",
+      description: "$5 off any order",
+    },
+  });
+
+  // Phase-4: Sample currency listing seller (use one of the pros)
+  const seller = pros[0];
+  await prisma.currencyListing.upsert({
+    where: { id: "seed-currency-arc-coins" },
+    update: {},
+    create: {
+      id: "seed-currency-arc-coins",
+      sellerId: seller.id,
+      gameSlug: "arc-raiders",
+      currencyName: "ARC Coins",
+      unit: "1,000 coins",
+      pricePerUnitCents: 179,
+      minQty: 1,
+      maxQty: 500,
+      deliveryHours: 1,
+      status: "AVAILABLE",
+      description: "Trusted seller, 1k coins per unit, in-raid handoff.",
+    },
+  });
+  await prisma.accountListing.upsert({
+    where: { id: "seed-account-valorant-imm" },
+    update: {},
+    create: {
+      id: "seed-account-valorant-imm",
+      sellerId: seller.id,
+      gameSlug: "valorant",
+      title: "Valorant Immortal NA Account · 70+ skins",
+      description: "Knife collection, all agents unlocked, EU servers.",
+      priceCents: 9999,
+      attributes: { rank: "Immortal", region: "NA", agentsUnlocked: 22, skins: 73 },
+      screenshots: [],
+      status: "AVAILABLE",
+    },
+  });
+
+  // Phase-4: site counters seed
+  for (const [key, value] of Object.entries({
+    prosOnline: 47,
+    completedOrders: 1842,
+    happyCustomers: 743,
+  })) {
+    await prisma.siteCounter.upsert({
+      where: { key },
+      update: { value },
+      create: { key, value },
+    });
+  }
 
   console.log("\nDone.");
 }

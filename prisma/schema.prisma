@@ -134,6 +134,94 @@ enum AuditTargetType {
   BLOG_POST
   REFERRAL
   CONFIG
+  OFFER
+  COUPON
+  CASHBACK_TIER
+  ACCOUNT_LISTING
+  CURRENCY_LISTING
+  TIP
+  NEWSLETTER
+}
+
+enum ProductType {
+  BOOSTING
+  CURRENCY
+  ACCOUNT
+}
+
+enum DeliveryMode {
+  PILOTED
+  SELF_PLAY
+  BOTH
+}
+
+enum OfferStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum OfferBadge {
+  NONE
+  HOT
+  POPULAR
+  NEW
+  SALE
+}
+
+enum CouponType {
+  PERCENT
+  FIXED
+}
+
+enum CouponScope {
+  GLOBAL
+  GAME
+  OFFER
+  USER
+}
+
+enum CouponStatus {
+  ACTIVE
+  PAUSED
+  EXPIRED
+}
+
+enum WalletEntryKind {
+  CASHBACK_EARNED
+  CASHBACK_USED
+  REFERRAL_REWARD
+  PROMO_CREDIT
+  REFUND_CREDIT
+  TIP_RECEIVED
+  TIP_SENT
+  ADJUSTMENT
+}
+
+enum CashbackCategory {
+  BOOSTING
+  CURRENCY_ACCOUNT
+}
+
+enum ListingStatus {
+  DRAFT
+  AVAILABLE
+  RESERVED
+  SOLD
+  PAUSED
+  REJECTED
+}
+
+enum NewsletterStatus {
+  PENDING
+  CONFIRMED
+  UNSUBSCRIBED
+}
+
+enum TipStatus {
+  PENDING
+  PAID
+  CANCELLED
 }
 
 enum PaymentStatus {
@@ -222,32 +310,43 @@ model User {
   proCountry           String?
   proVerified          Boolean              @default(false)
   walletCreditCents    Int                  @default(0)
+  totalSpentCents      Int                  @default(0)
   marketingConsent     Boolean              @default(false)
   cookieConsent        Boolean?
+  cookieAnalytics      Boolean              @default(false)
+  cookieMarketing      Boolean              @default(false)
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
 
   accounts          Account[]
   sessions          Session[]
-  ordersPlaced      Order[]          @relation("OrdersPlaced")
-  ordersClaimed     Order[]          @relation("OrdersClaimed")
+  ordersPlaced      Order[]            @relation("OrdersPlaced")
+  ordersClaimed     Order[]            @relation("OrdersClaimed")
   bids              Bid[]
-  activities        OrderActivity[]  @relation("ActivityActor")
-  messagesSent      Message[]        @relation("MessageSender")
-  reviewsWritten    Review[]         @relation("ReviewAuthor")
-  reviewsReceived   Review[]         @relation("ReviewRecipient")
+  activities        OrderActivity[]    @relation("ActivityActor")
+  messagesSent      Message[]          @relation("MessageSender")
+  reviewsWritten    Review[]           @relation("ReviewAuthor")
+  reviewsReceived   Review[]           @relation("ReviewRecipient")
   proApplication    ProApplication?
   twoFactor         TwoFactorSecret?
   notifications     Notification[]
-  disputesOpened    Dispute[]        @relation("DisputeOpener")
-  disputesAssigned  Dispute[]        @relation("DisputeAssignee")
+  disputesOpened    Dispute[]          @relation("DisputeOpener")
+  disputesAssigned  Dispute[]          @relation("DisputeAssignee")
   disputeMessages   DisputeMessage[]
-  auditEvents       AuditLog[]       @relation("AuditActor")
-  referredBy        User?            @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
-  referralsMade     User[]           @relation("UserReferrals")
-  referralsCreated  Referral[]       @relation("ReferralReferrer")
-  referralsReceived Referral[]       @relation("ReferralReferred")
-  blogPosts         BlogPost[]       @relation("BlogAuthor")
+  auditEvents       AuditLog[]         @relation("AuditActor")
+  referredBy        User?              @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referralsMade     User[]             @relation("UserReferrals")
+  referralsCreated  Referral[]         @relation("ReferralReferrer")
+  referralsReceived Referral[]         @relation("ReferralReferred")
+  blogPosts         BlogPost[]         @relation("BlogAuthor")
+  walletEntries     WalletEntry[]
+  wishlistItems     WishlistItem[]
+  productReviews    ProductReview[]    @relation("ProductReviewAuthor")
+  accountListings   AccountListing[]   @relation("AccountListingSeller")
+  currencyListings  CurrencyListing[]  @relation("CurrencyListingSeller")
+  tipsSent          Tip[]              @relation("TipSender")
+  tipsReceived      Tip[]              @relation("TipRecipient")
+  couponRedemptions CouponRedemption[]
 }
 
 model Account {
@@ -311,11 +410,22 @@ model Order {
   refundedAt            DateTime?
   autoAssignedFromBidId String?
   status                OrderStatus         @default(OPEN)
+  productType           ProductType         @default(BOOSTING)
+  deliveryMode          DeliveryMode        @default(BOTH)
+  offerId               String?
+  accountListingId      String?             @unique
+  currencyListingId     String?
+  currencyQuantity      Int?
+  couponCode            String?
+  couponDiscountCents   Int                 @default(0)
+  walletAppliedCents    Int                 @default(0)
+  cashbackEarnedCents   Int                 @default(0)
+  tipAmountCents        Int                 @default(0)
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
-  customer            User            @relation("OrdersPlaced", fields: [customerId], references: [id])
-  pro                 User?           @relation("OrdersClaimed", fields: [proId], references: [id])
+  customer            User               @relation("OrdersPlaced", fields: [customerId], references: [id])
+  pro                 User?              @relation("OrdersClaimed", fields: [proId], references: [id])
   bids                Bid[]
   payment             Payment?
   transactions        Transaction[]
@@ -323,7 +433,13 @@ model Order {
   conversation        Conversation?
   review              Review?
   disputes            Dispute[]
-  referralsAttributed Referral[]      @relation("ReferralAttributedOrder")
+  referralsAttributed Referral[]         @relation("ReferralAttributedOrder")
+  offer               Offer?             @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  accountListing      AccountListing?    @relation(fields: [accountListingId], references: [id], onDelete: SetNull)
+  currencyListing     CurrencyListing?   @relation(fields: [currencyListingId], references: [id], onDelete: SetNull)
+  walletEntries       WalletEntry[]
+  couponRedemptions   CouponRedemption[]
+  tip                 Tip?
 
   @@index([status])
   @@index([customerId])
@@ -331,6 +447,8 @@ model Order {
   @@index([paymentStatus])
   @@index([refundRequestStatus])
   @@index([gameSlug])
+  @@index([offerId])
+  @@index([productType])
 }
 
 model Bid {
@@ -650,4 +768,254 @@ model RateLimitBucket {
   updatedAt DateTime @updatedAt
 
   @@index([resetAt])
+}
+
+model OfferCategory {
+  id           String   @id @default(cuid())
+  gameSlug     String
+  slug         String
+  name         String
+  description  String?  @db.Text
+  displayOrder Int      @default(100)
+  iconKey      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  offers Offer[]
+
+  @@unique([gameSlug, slug])
+  @@index([gameSlug, displayOrder])
+}
+
+model Offer {
+  id              String       @id @default(cuid())
+  slug            String       @unique
+  gameSlug        String
+  categoryId      String?
+  productType     ProductType  @default(BOOSTING)
+  service         String       @default("boosting")
+  title           String
+  summary         String?      @db.Text
+  description     String?      @db.Text
+  features        String[]     @default([])
+  basePriceCents  Int
+  salePriceCents  Int?
+  discountPercent Int?
+  badge           OfferBadge   @default(NONE)
+  hot             Boolean      @default(false)
+  popular         Boolean      @default(false)
+  rating          Float?
+  reviewsCount    Int          @default(0)
+  ordersCount     Int          @default(0)
+  deliveryMode    DeliveryMode @default(BOTH)
+  deliveryHours   Int?
+  status          OfferStatus  @default(PUBLISHED)
+  imageUrl        String?
+  metadata        Json?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  category       OfferCategory?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  orders         Order[]
+  wishlistItems  WishlistItem[]
+  productReviews ProductReview[]
+
+  @@index([gameSlug])
+  @@index([status, gameSlug])
+  @@index([hot])
+  @@index([popular])
+  @@index([categoryId])
+}
+
+model Coupon {
+  id            String       @id @default(cuid())
+  code          String       @unique
+  type          CouponType
+  valuePercent  Int?
+  valueCents    Int?
+  scope         CouponScope  @default(GLOBAL)
+  scopeRefId    String?
+  minOrderCents Int          @default(0)
+  maxUses       Int?
+  usesCount     Int          @default(0)
+  perUserLimit  Int          @default(1)
+  startsAt      DateTime?
+  expiresAt     DateTime?
+  status        CouponStatus @default(ACTIVE)
+  description   String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@index([status])
+  @@index([scope])
+  @@index([expiresAt])
+}
+
+model CouponRedemption {
+  id                 String   @id @default(cuid())
+  couponId           String
+  userId             String
+  orderId            String
+  amountAppliedCents Int
+  createdAt          DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, orderId])
+  @@index([userId])
+  @@index([couponId])
+}
+
+model CashbackTier {
+  id              String           @id @default(cuid())
+  category        CashbackCategory
+  name            String
+  thresholdCents  Int              @default(0)
+  percentBasis100 Int              @default(500)
+  active          Boolean          @default(true)
+  displayOrder    Int              @default(100)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([category, thresholdCents])
+}
+
+model WalletEntry {
+  id                String          @id @default(cuid())
+  userId            String
+  orderId           String?
+  kind              WalletEntryKind
+  amountCents       Int
+  balanceAfterCents Int
+  description       String?
+  metadata          Json?
+  createdAt         DateTime        @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+}
+
+model WishlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  offerId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  offer Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, offerId])
+  @@index([userId])
+}
+
+model ProductReview {
+  id        String   @id @default(cuid())
+  offerId   String
+  authorId  String
+  orderId   String?
+  rating    Int
+  title     String?
+  body      String?  @db.Text
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  offer  Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  author User  @relation("ProductReviewAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@unique([offerId, authorId, orderId])
+  @@index([offerId])
+}
+
+model AccountListing {
+  id             String        @id @default(cuid())
+  sellerId       String
+  gameSlug       String
+  title          String
+  description    String?       @db.Text
+  priceCents     Int
+  salePriceCents Int?
+  attributes     Json?
+  screenshots    String[]      @default([])
+  loginEmail     String?
+  status         ListingStatus @default(DRAFT)
+  soldOrderId    String?
+  soldAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  seller User   @relation("AccountListingSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  order  Order?
+
+  @@index([gameSlug, status])
+  @@index([sellerId])
+}
+
+model CurrencyListing {
+  id                String        @id @default(cuid())
+  sellerId          String
+  gameSlug          String
+  currencyName      String
+  unit              String        @default("units")
+  pricePerUnitCents Int
+  minQty            Int           @default(1)
+  maxQty            Int           @default(1000000)
+  deliveryHours     Int           @default(2)
+  status            ListingStatus @default(AVAILABLE)
+  description       String?       @db.Text
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  seller User    @relation("CurrencyListingSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@index([gameSlug, status])
+  @@index([sellerId])
+}
+
+model Tip {
+  id          String    @id @default(cuid())
+  orderId     String    @unique
+  fromUserId  String
+  toUserId    String
+  amountCents Int
+  currency    String    @default("USD")
+  status      TipStatus @default(PENDING)
+  message     String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  from  User  @relation("TipSender", fields: [fromUserId], references: [id], onDelete: Cascade)
+  to    User  @relation("TipRecipient", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@index([toUserId])
+  @@index([fromUserId])
+}
+
+model NewsletterSubscriber {
+  id          String           @id @default(cuid())
+  email       String           @unique
+  locale      Locale           @default(EN)
+  status      NewsletterStatus @default(PENDING)
+  unsubToken  String           @unique
+  source      String?
+  confirmedAt DateTime?
+  unsubAt     DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([status])
+}
+
+model SiteCounter {
+  key       String   @id
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
 }
