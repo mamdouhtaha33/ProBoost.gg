@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
+import { CookieBanner } from "@/components/cookie-banner";
+import { resolveLocaleAndCurrency } from "@/lib/locale-server";
+import { getLocaleDir, LOCALE_META } from "@/lib/i18n";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,14 +23,19 @@ export const metadata: Metadata = {
     "Premium ARC Raiders boosting, coaching, and carry services performed by elite Pros. Bid-driven pricing, verified players, fast delivery.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const { locale } = await resolveLocaleAndCurrency();
+  const dir = getLocaleDir(locale);
+  const htmlLang = LOCALE_META[locale]?.code ?? "en";
+
   return (
     <html
-      lang="en"
+      lang={htmlLang}
+      dir={dir}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="relative min-h-full flex flex-col">
@@ -36,6 +44,7 @@ export default function RootLayout({
           <main className="flex-1">{children}</main>
           <SiteFooter />
         </div>
+        <CookieBanner />
       </body>
     </html>
   );

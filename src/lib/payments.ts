@@ -19,25 +19,36 @@ export type CreateCheckoutResult = {
 const STRIPE_ENABLED =
   !!process.env.STRIPE_SECRET_KEY && !!process.env.STRIPE_WEBHOOK_SECRET;
 
+const PAYMOB_ENABLED =
+  !!process.env.PAYMOB_API_KEY && !!process.env.PAYMOB_INTEGRATION_ID;
+
+export function listAvailableProviders(): PaymentProvider[] {
+  const list: PaymentProvider[] = ["MANUAL"];
+  if (STRIPE_ENABLED) list.push("STRIPE");
+  if (PAYMOB_ENABLED) list.push("PAYMOB");
+  return list;
+}
+
 export function getActiveProvider(): PaymentProvider {
-  return STRIPE_ENABLED ? "STRIPE" : "MANUAL";
+  if (STRIPE_ENABLED) return "STRIPE";
+  if (PAYMOB_ENABLED) return "PAYMOB";
+  return "MANUAL";
 }
 
 /**
- * Create a checkout session for an order. The MANUAL provider returns an
- * internal confirmation URL so the customer can simulate paying in development.
- * The STRIPE provider is a placeholder that requires STRIPE_SECRET_KEY +
- * STRIPE_WEBHOOK_SECRET; until configured we fall back to MANUAL.
+ * Create a checkout session for an order.
+ * MANUAL returns an internal confirmation URL for dev.
+ * STRIPE requires STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET.
+ * PAYMOB requires PAYMOB_API_KEY + PAYMOB_INTEGRATION_ID.
  */
 export async function createCheckoutSession(
-  input: CreateCheckoutInput,
+  input: CreateCheckoutInput & { provider?: PaymentProvider },
 ): Promise<CreateCheckoutResult> {
-  const provider = getActiveProvider();
+  const provider = input.provider ?? getActiveProvider();
   const currency = input.currency ?? "USD";
 
-  if (provider === "STRIPE") {
-    return createStripeCheckout(input, currency);
-  }
+  if (provider === "STRIPE" && STRIPE_ENABLED) return createStripeCheckout(input, currency);
+  if (provider === "PAYMOB" && PAYMOB_ENABLED) return createPaymobCheckout(input, currency);
   return createManualCheckout(input, currency);
 }
 
@@ -173,6 +184,120 @@ async function createStripeCheckout(
     checkoutUrl: json.url,
     provider: "STRIPE",
   };
+}
+
+async function createPaymobCheckout(
+  input: CreateCheckoutInput,
+  currency: string,
+): Promise<CreateCheckoutResult> {
+  // Paymob production flow:
+  //   1. POST /api/auth/tokens with PAYMOB_API_KEY -> auth token
+  //   2. POST /api/ecommerce/orders -> paymob order id
+  //   3. POST /api/acceptance/payment_keys -> payment key
+  //   4. Build iframe URL: https://accept.paymob.com/api/acceptance/iframes/<id>?payment_token=<key>
+  // We scaffold this so the server compiles; if any step fails or env is
+  // missing we surface the error to the caller.
+  const apiKey = process.env.PAYMOB_API_KEY!;
+  const integrationId = process.env.PAYMOB_INTEGRATION_ID!;
+  const iframeId = process.env.PAYMOB_IFRAME_ID;
+
+  let authToken: string;
+  try {
+    const r = await fetch("https://accept.paymob.com/api/auth/tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    const j = (await r.json()) as { token?: string };
+    if (!j.token) throw new Error("paymob auth token missing");
+    authToken = j.token;
+  } catch (err) {
+    throw new Error(
+      `Paymob auth failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const paymobOrderRes = await fetch("https://accept.paymob.com/api/ecommerce/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      auth_token: authToken,
+      delivery_needed: false,
+      amount_cents: input.amount,
+      currency,
+      items: [{ name: `ProBoost.gg Order ${input.orderId.slice(0, 8)}`, amount_cents: input.amount, quantity: 1 }],
+    }),
+  });
+  const paymobOrder = (await paymobOrderRes.json()) as { id?: number };
+  if (!paymobOrder.id) throw new Error("paymob order creation failed");
+
+  const keyRes = await fetch("https://accept.paymob.com/api/acceptance/payment_keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      auth_token: authToken,
+      amount_cents: input.amount,
+      expiration: 3600,
+      order_id: paymobOrder.id,
+      billing_data: {
+        email: "user@proboost.gg",
+        first_name: "ProBoost",
+        last_name: "Customer",
+        phone_number: "+10000000000",
+        country: "EG",
+        city: "Cairo",
+        street: "N/A",
+        building: "N/A",
+        floor: "N/A",
+        apartment: "N/A",
+      },
+      currency,
+      integration_id: Number(integrationId),
+    }),
+  });
+  const keyJson = (await keyRes.json()) as { token?: string };
+  if (!keyJson.token) throw new Error("paymob payment key missing");
+
+  const checkoutUrl = iframeId
+    ? `https://accept.paymob.com/api/acceptance/iframes/${iframeId}?payment_token=${keyJson.token}`
+    : `https://accept.paymob.com/api/acceptance/post_pay?payment_token=${keyJson.token}`;
+
+  const payment = await prisma.payment.upsert({
+    where: { orderId: input.orderId },
+    update: {
+      provider: "PAYMOB",
+      amount: input.amount,
+      currency,
+      status: "REQUIRES_ACTION",
+      providerRef: String(paymobOrder.id),
+      checkoutUrl,
+      lastError: null,
+    },
+    create: {
+      orderId: input.orderId,
+      provider: "PAYMOB",
+      amount: input.amount,
+      currency,
+      status: "REQUIRES_ACTION",
+      providerRef: String(paymobOrder.id),
+      checkoutUrl,
+    },
+  });
+
+  await prisma.order.update({
+    where: { id: input.orderId },
+    data: { paymentProvider: "PAYMOB", paymentStatus: "REQUIRES_ACTION" },
+  });
+
+  await logActivity(prisma, {
+    orderId: input.orderId,
+    type: "PAYMENT_LINK_CREATED",
+    message: "Paymob checkout session created.",
+    metadata: { provider: "PAYMOB", amount: input.amount, currency },
+    visibleToPro: false,
+  });
+
+  return { paymentId: payment.id, checkoutUrl, provider: "PAYMOB" };
 }
 
 /**
