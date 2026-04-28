@@ -4,6 +4,7 @@ import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { CookieBanner } from "@/components/cookie-banner";
+import { LiveChat } from "@/components/live-chat";
 import { resolveLocaleAndCurrency } from "@/lib/locale-server";
 import { getLocaleDir, LOCALE_META } from "@/lib/i18n";
 
@@ -45,6 +46,7 @@ export default async function RootLayout({
           <SiteFooter />
         </div>
         <CookieBanner />
+        <LiveChat crispWebsiteId={process.env.NEXT_PUBLIC_CRISP_WEBSITE_ID} />
       </body>
     </html>
   );

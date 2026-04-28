@@ -15,7 +15,9 @@ export type EmailTemplate =
   | "dispute.opened"
   | "dispute.updated"
   | "pro.application.update"
-  | "referral.reward";
+  | "referral.reward"
+  | "newsletter.welcome"
+  | "tip.received";
 
 type SendEmailInput = {
   to: string;
@@ -107,4 +109,21 @@ ${
 <hr style="margin:32px 0;border:none;border-top:1px solid #1e2434;" />
 <div style="font-size:12px;color:#7b8294;">You're receiving this because you have an active ProBoost.gg account. Update your preferences in Settings.</div>
 </div></body></html>`;
+}
+
+export async function logEmail(input: {
+  toEmail: string;
+  templateName: EmailTemplate;
+  subject: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await prisma.emailLog.create({
+    data: {
+      toEmail: input.toEmail.toLowerCase(),
+      templateName: input.templateName,
+      subject: input.subject,
+      status: "SKIPPED",
+      metadata: input.metadata as object | undefined,
+    },
+  });
 }

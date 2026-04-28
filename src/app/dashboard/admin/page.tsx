@@ -139,6 +139,18 @@ export default async function AdminDashboardPage({
           >
             Emails
           </Link>
+          <Link
+            href="/dashboard/admin/offers"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Offers
+          </Link>
+          <Link
+            href="/dashboard/admin/coupons"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Coupons
+          </Link>
         </div>
       </div>
 
