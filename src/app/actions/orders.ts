@@ -7,10 +7,17 @@ import { auth, requireRole, requireUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { logActivity } from "@/lib/activity";
 import {
-  computeBasePrice,
-  defaultTitle,
+  computeBasePriceFor,
+  defaultOrderTitle,
+  getGameBySlug,
   orderOptionsSchema,
-} from "@/lib/arc-pricing";
+} from "@/lib/games";
+import { sendEmail, renderHtml } from "@/lib/email";
+import { notify } from "@/lib/notifications";
+import { logAudit } from "@/lib/audit";
+import { rateLimit } from "@/lib/rate-limit";
+import { recomputeProStats } from "@/lib/pro-rank";
+import { postDiscord, colorFor } from "@/lib/discord";
 
 export type OrderActionState = {
   ok: boolean;
@@ -25,6 +32,15 @@ export async function createOrder(
   const session = await auth();
   if (!session?.user) {
     return { ok: false, error: "You must be signed in to place an order." };
+  }
+
+  const gameSlug = String(formData.get("gameSlug") ?? "arc-raiders");
+  const game = getGameBySlug(gameSlug);
+  if (!game) return { ok: false, error: "Unknown game." };
+
+  const rl = await rateLimit(`createOrder:${session.user.id}`, 10, 60);
+  if (!rl.allowed) {
+    return { ok: false, error: "Too many orders — slow down a moment." };
   }
 
   const raw = {
@@ -51,7 +67,7 @@ export async function createOrder(
     }
   }
 
-  const basePrice = computeBasePrice(opts);
+  const basePrice = computeBasePriceFor(game, opts);
   if (basePrice <= 0) {
     return { ok: false, error: "Configure your order — the price is $0." };
   }
@@ -61,12 +77,14 @@ export async function createOrder(
       data: {
         customerId: session.user.id,
         service: opts.service,
-        title: defaultTitle(opts),
-        description: opts.notes || "",
-        options: opts as object,
+        title: defaultOrderTitle(game, opts),
+        description: typeof opts.notes === "string" ? opts.notes : "",
+        options: { ...opts, gameSlug } as object,
         basePrice,
         status: "OPEN",
         paymentStatus: "PENDING",
+        game: game.name,
+        gameSlug: game.slug,
       },
       select: { id: true, title: true },
     });
@@ -77,8 +95,47 @@ export async function createOrder(
       message: `Order placed: ${o.title}`,
       actorUserId: session.user.id,
     });
+    await logAudit(tx, {
+      actorUserId: session.user.id,
+      action: "order.create",
+      targetType: "ORDER",
+      targetId: o.id,
+      after: { title: o.title, basePrice, gameSlug: game.slug },
+    });
     return o;
   });
+
+  // Out-of-band notifications
+  await notify(prisma, {
+    userId: session.user.id,
+    type: "ORDER_CREATED",
+    title: "Order placed",
+    body: `${order.title} is live. Pros are placing bids.`,
+    link: `/dashboard/orders/${order.id}`,
+  });
+  if (session.user.email) {
+    await sendEmail({
+      to: session.user.email,
+      template: "order.created",
+      subject: `Your ProBoost.gg order is live — ${order.title}`,
+      html: renderHtml({
+        title: "Order placed",
+        bodyHtml: `<p>We received your order: <strong>${order.title}</strong>.</p><p>Pros are bidding now. You'll get an email when one is selected.</p>`,
+        ctaUrl: `${process.env.NEXTAUTH_URL ?? ""}/dashboard/orders/${order.id}`,
+        ctaLabel: "Track order",
+      }),
+    });
+  }
+  await postDiscord(`📦 New order placed`, [
+    {
+      title: order.title,
+      color: colorFor("info"),
+      fields: [
+        { name: "Game", value: game.name, inline: true },
+        { name: "Base price (cents)", value: String(basePrice), inline: true },
+      ],
+    },
+  ]);
 
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/pro");
@@ -95,6 +152,9 @@ const placeBidSchema = z.object({
 export async function placeBid(formData: FormData) {
   const user = await requireRole(["PRO", "ADMIN"]);
 
+  const rl = await rateLimit(`placeBid:${user.id}`, 30, 60);
+  if (!rl.allowed) throw new Error("Slow down — too many bids in a minute.");
+
   const parsed = placeBidSchema.safeParse({
     orderId: formData.get("orderId"),
     amount: formData.get("amount"),
@@ -108,7 +168,15 @@ export async function placeBid(formData: FormData) {
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      basePrice: true,
+      gameSlug: true,
+      service: true,
+      customerId: true,
+      title: true,
+    },
   });
   if (!order) throw new Error("Order not found");
   if (order.status !== "OPEN") throw new Error("Order is no longer open for bids");
@@ -117,7 +185,7 @@ export async function placeBid(formData: FormData) {
     const existing = await tx.bid.findUnique({
       where: { orderId_proId: { orderId, proId: user.id } },
     });
-    await tx.bid.upsert({
+    const bid = await tx.bid.upsert({
       where: { orderId_proId: { orderId, proId: user.id } },
       update: { amount, message, status: "PENDING" },
       create: { orderId, proId: user.id, amount, message, status: "PENDING" },
@@ -129,10 +197,29 @@ export async function placeBid(formData: FormData) {
         ? `Pro updated their bid to ${formatCents(amount)}.`
         : `Pro placed a bid of ${formatCents(amount)}.`,
       actorUserId: user.id,
-      metadata: { amount },
+      metadata: { amount, bidId: bid.id },
       visibleToUser: true,
     });
+    await logAudit(tx, {
+      actorUserId: user.id,
+      action: existing ? "bid.update" : "bid.create",
+      targetType: "BID",
+      targetId: bid.id,
+      after: { amount },
+    });
   });
+
+  // Notify customer
+  await notify(prisma, {
+    userId: order.customerId,
+    type: "BID_PLACED",
+    title: "New bid received",
+    body: `A Pro bid ${formatCents(amount)} on "${order.title}".`,
+    link: `/dashboard/orders/${orderId}`,
+  });
+
+  // Try auto-assignment
+  await tryAutoAssign(orderId);
 
   revalidatePath("/dashboard/pro");
   revalidatePath(`/dashboard/admin/orders/${orderId}`);
@@ -150,6 +237,18 @@ export async function acceptBid(formData: FormData) {
   if (!parsed.success) throw new Error("Invalid bid");
   const { bidId } = parsed.data;
 
+  await acceptBidById(bidId, admin.id, "manual");
+
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/pro");
+  revalidatePath("/dashboard");
+}
+
+async function acceptBidById(
+  bidId: string,
+  actorUserId: string | null,
+  source: "manual" | "auto",
+) {
   await prisma.$transaction(async (tx) => {
     const bid = await tx.bid.findUnique({
       where: { id: bidId },
@@ -167,6 +266,7 @@ export async function acceptBid(formData: FormData) {
         acceptedBidId: bid.id,
         finalPrice: bid.amount,
         status: "ASSIGNED",
+        autoAssignedFromBidId: source === "auto" ? bid.id : null,
       },
     });
 
@@ -187,15 +287,110 @@ export async function acceptBid(formData: FormData) {
     await logActivity(tx, {
       orderId: bid.orderId,
       type: "BID_ACCEPTED",
-      message: `Admin accepted ${bid.pro.name ?? bid.pro.email} at ${formatCents(bid.amount)}.`,
-      actorUserId: admin.id,
-      metadata: { bidId: bid.id, amount: bid.amount, proId: bid.proId },
+      message:
+        source === "auto"
+          ? `Auto-assigned to ${bid.pro.name ?? bid.pro.email} at ${formatCents(bid.amount)}.`
+          : `Admin accepted ${bid.pro.name ?? bid.pro.email} at ${formatCents(bid.amount)}.`,
+      actorUserId: actorUserId,
+      metadata: {
+        bidId: bid.id,
+        amount: bid.amount,
+        proId: bid.proId,
+        source,
+      },
+    });
+    await logAudit(tx, {
+      actorUserId,
+      action: source === "auto" ? "bid.auto_accept" : "bid.accept",
+      targetType: "BID",
+      targetId: bid.id,
+      after: { proId: bid.proId, amount: bid.amount, orderId: bid.orderId },
     });
   });
 
-  revalidatePath("/dashboard/admin");
-  revalidatePath("/dashboard/pro");
-  revalidatePath("/dashboard");
+  // Notify pro + customer; email pro
+  const fullBid = await prisma.bid.findUnique({
+    where: { id: bidId },
+    include: {
+      pro: true,
+      order: { select: { id: true, title: true, customerId: true } },
+    },
+  });
+  if (fullBid) {
+    await notify(prisma, {
+      userId: fullBid.proId,
+      type: "BID_ACCEPTED",
+      title: "Bid accepted!",
+      body: `Your bid on "${fullBid.order.title}" was accepted.`,
+      link: `/dashboard/pro/orders/${fullBid.order.id}`,
+    });
+    await notify(prisma, {
+      userId: fullBid.order.customerId,
+      type: "BID_ACCEPTED",
+      title: "Pro assigned",
+      body: `Your order "${fullBid.order.title}" is now in progress with a Pro.`,
+      link: `/dashboard/orders/${fullBid.order.id}`,
+    });
+    if (fullBid.pro.email) {
+      await sendEmail({
+        to: fullBid.pro.email,
+        template: "bid.accepted",
+        subject: "Your bid was accepted",
+        html: renderHtml({
+          title: "Bid accepted!",
+          bodyHtml: `<p>Your bid on <strong>${fullBid.order.title}</strong> was accepted. Open the order to start working.</p>`,
+          ctaUrl: `${process.env.NEXTAUTH_URL ?? ""}/dashboard/pro/orders/${fullBid.order.id}`,
+          ctaLabel: "Open order",
+        }),
+      });
+    }
+  }
+}
+
+async function tryAutoAssign(orderId: string): Promise<void> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      bids: { where: { status: "PENDING" }, include: { pro: true }, orderBy: { amount: "asc" } },
+    },
+  });
+  if (!order || order.status !== "OPEN") return;
+  if (order.bids.length === 0) return;
+
+  const rules = await prisma.autoAssignmentRule.findMany({
+    where: {
+      enabled: true,
+      OR: [{ gameSlug: null }, { gameSlug: order.gameSlug }],
+      AND: [{ OR: [{ service: null }, { service: order.service }] }],
+    },
+    orderBy: [{ priority: "desc" }],
+  });
+
+  for (const rule of rules) {
+    const minMatch = rankAtLeast(rule.minProRank);
+    for (const bid of order.bids) {
+      const pct = Math.round((bid.amount / order.basePrice) * 100);
+      if (pct < rule.minBidPercent) continue;
+      if (pct > rule.maxBidPercent) continue;
+      if (rule.requireProVerified && !bid.pro.proVerified) continue;
+      if (!minMatch(bid.pro.proRank)) continue;
+      try {
+        await acceptBidById(bid.id, null, "auto");
+        return;
+      } catch {
+        // race with another rule firing — skip
+        return;
+      }
+    }
+  }
+}
+
+const RANK_ORDER = ["UNRANKED", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND"] as const;
+type RankLevel = (typeof RANK_ORDER)[number];
+
+function rankAtLeast(min: RankLevel) {
+  const minIdx = RANK_ORDER.indexOf(min);
+  return (rank: RankLevel) => RANK_ORDER.indexOf(rank) >= minIdx;
 }
 
 export async function withdrawBid(formData: FormData) {
@@ -234,14 +429,17 @@ export async function withdrawBid(formData: FormData) {
 export async function becomePro() {
   const user = await requireUser();
   if (user.role === "ADMIN" || user.role === "PRO") return;
-  // Mark as having a draft application so the user is sent through the
-  // application flow rather than auto-promoted.
   await prisma.user.update({
     where: { id: user.id },
     data: { proApplicationStatus: "NOT_APPLIED" },
   });
   revalidatePath("/dashboard");
   redirect("/dashboard/pro/apply");
+}
+
+export async function markCompletedAndRecompute(orderId: string) {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (order?.proId) await recomputeProStats(order.proId);
 }
 
 function formatCents(cents: number) {

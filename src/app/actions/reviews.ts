@@ -5,6 +5,9 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { logActivity } from "@/lib/activity";
+import { notify } from "@/lib/notifications";
+import { sendEmail, renderHtml } from "@/lib/email";
+import { recomputeProStats } from "@/lib/pro-rank";
 
 const reviewSchema = z.object({
   orderId: z.string().min(1),
@@ -65,6 +68,35 @@ export async function leaveReview(formData: FormData) {
       metadata: { rating },
     });
   });
+
+  await recomputeProStats(order.proId);
+
+  const pro = await prisma.user.findUnique({
+    where: { id: order.proId },
+    select: { email: true, id: true },
+  });
+  if (pro) {
+    await notify(prisma, {
+      userId: pro.id,
+      type: "REVIEW_RECEIVED",
+      title: `New ${rating}★ review`,
+      body: title || `You received a ${rating}-star review.`,
+      link: `/dashboard/pro/orders/${orderId}`,
+    });
+    if (pro.email) {
+      await sendEmail({
+        to: pro.email,
+        template: "review.received",
+        subject: `You got a ${rating}★ review on ProBoost.gg`,
+        html: renderHtml({
+          title: `New ${rating}★ review`,
+          bodyHtml: `<p>${body || "Great work — the customer left you a positive review."}</p>`,
+          ctaUrl: `${process.env.NEXTAUTH_URL ?? ""}/dashboard/pro/orders/${orderId}`,
+          ctaLabel: "View order",
+        }),
+      });
+    }
+  }
 
   revalidatePath(`/dashboard/orders/${orderId}`);
 }

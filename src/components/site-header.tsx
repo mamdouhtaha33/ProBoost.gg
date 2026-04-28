@@ -2,6 +2,8 @@ import Link from "next/link";
 import { auth, signOut } from "@/auth";
 import { ShieldCheck, LayoutDashboard, LogOut } from "lucide-react";
 import { SiteLogo } from "@/components/site-logo";
+import { LocaleSwitcher } from "@/components/locale-switcher";
+import { resolveLocaleAndCurrency } from "@/lib/locale-server";
 
 async function SignOutButton() {
   return (
@@ -26,6 +28,7 @@ async function SignOutButton() {
 export async function SiteHeader() {
   const session = await auth();
   const role = session?.user?.role;
+  const { locale, currency } = await resolveLocaleAndCurrency();
 
   return (
     <header className="sticky top-0 z-50 border-b border-[color:var(--border)] bg-[#07080c]/70 backdrop-blur-md">
@@ -48,12 +51,21 @@ export async function SiteHeader() {
           <Link href="/games" className="hover:text-white transition-colors">
             Games
           </Link>
+          <Link href="/pros" className="hover:text-white transition-colors">
+            Pros
+          </Link>
+          <Link href="/blog" className="hover:text-white transition-colors">
+            Blog
+          </Link>
           <Link href="/faq" className="hover:text-white transition-colors">
             FAQ
           </Link>
         </nav>
 
         <div className="flex items-center gap-2">
+          <div className="hidden md:block">
+            <LocaleSwitcher currentLocale={locale} currentCurrency={currency} />
+          </div>
           {session?.user ? (
             <>
               <Link
