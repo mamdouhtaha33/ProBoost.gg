@@ -45,6 +45,12 @@ export async function SiteHeader() {
           <Link href="/services/arc-raiders#carry" className="hover:text-white transition-colors">
             Carry
           </Link>
+          <Link href="/games" className="hover:text-white transition-colors">
+            Games
+          </Link>
+          <Link href="/faq" className="hover:text-white transition-colors">
+            FAQ
+          </Link>
         </nav>
 
         <div className="flex items-center gap-2">

@@ -6,37 +6,44 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Seeding ProBoost.gg marketplace...");
 
-  // Users
   const admin = await prisma.user.upsert({
     where: { email: "admin@proboost.gg" },
     update: { role: "ADMIN" },
-    create: {
-      email: "admin@proboost.gg",
-      name: "Admin",
-      role: "ADMIN",
-    },
+    create: { email: "admin@proboost.gg", name: "Admin", role: "ADMIN" },
   });
 
   const customer = await prisma.user.upsert({
     where: { email: "user@proboost.gg" },
     update: {},
-    create: {
-      email: "user@proboost.gg",
-      name: "Demo Player",
-      role: "USER",
-    },
+    create: { email: "user@proboost.gg", name: "Demo Player", role: "USER" },
   });
 
   const pros = await Promise.all(
     [
-      { email: "raidking@proboost.gg", name: "RaidKing_77" },
-      { email: "ghost@proboost.gg", name: "GhostScout" },
-      { email: "voidwalker@proboost.gg", name: "Voidwalker" },
+      {
+        email: "raidking@proboost.gg",
+        name: "RaidKing_77",
+        proHeadline: "Top 0.1% NA-East · 10k+ raids cleared",
+      },
+      {
+        email: "ghost@proboost.gg",
+        name: "GhostScout",
+        proHeadline: "Stealth specialist · solo queue carry",
+      },
+      {
+        email: "voidwalker@proboost.gg",
+        name: "Voidwalker",
+        proHeadline: "Apex coach · streamed & VOD-reviewed",
+      },
     ].map((p) =>
       prisma.user.upsert({
         where: { email: p.email },
-        update: { role: "PRO" },
-        create: { ...p, role: "PRO" },
+        update: { role: "PRO", proApplicationStatus: "APPROVED", proHeadline: p.proHeadline },
+        create: {
+          ...p,
+          role: "PRO",
+          proApplicationStatus: "APPROVED",
+        },
       }),
     ),
   );
@@ -45,7 +52,6 @@ async function main() {
   console.log(`  • Customer:  ${customer.email}`);
   pros.forEach((p) => console.log(`  • Pro:       ${p.email}`));
 
-  // Sample order with bids
   const opts = {
     service: "boosting" as const,
     region: "na-east" as const,
@@ -72,6 +78,33 @@ async function main() {
         options: opts,
         basePrice,
         status: "OPEN",
+        paymentStatus: "PAID",
+      },
+    });
+    await prisma.conversation.create({ data: { orderId: order.id } });
+    await prisma.payment.create({
+      data: {
+        orderId: order.id,
+        provider: "MANUAL",
+        status: "PAID",
+        amount: basePrice,
+        currency: "USD",
+        paidAt: new Date(),
+      },
+    });
+    await prisma.orderActivity.create({
+      data: {
+        orderId: order.id,
+        type: "CREATED",
+        message: `Order placed: ${order.title}`,
+        actorUserId: customer.id,
+      },
+    });
+    await prisma.orderActivity.create({
+      data: {
+        orderId: order.id,
+        type: "PAYMENT_CONFIRMED",
+        message: "Payment confirmed (seed).",
       },
     });
   }
@@ -86,7 +119,11 @@ async function main() {
         orderId: order.id,
         proId: p.id,
         amount: basePrice + (i - 1) * 1500,
-        message: ["I can start tonight.", "Top 0.1% NA-East.", "Streamed if you want."][i],
+        message: [
+          "I can start tonight.",
+          "Top 0.1% NA-East.",
+          "Streamed if you want.",
+        ][i],
         status: "PENDING",
       },
     });

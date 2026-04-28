@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { auth, requireRole, requireUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { logActivity } from "@/lib/activity";
 import {
   computeBasePrice,
   defaultTitle,
@@ -26,17 +27,16 @@ export async function createOrder(
     return { ok: false, error: "You must be signed in to place an order." };
   }
 
-  // Pull options from the form. addons is a multi-value entry.
   const raw = {
-    service:     formData.get("service"),
-    region:      formData.get("region"),
-    platform:    formData.get("platform"),
+    service: formData.get("service"),
+    region: formData.get("region"),
+    platform: formData.get("platform"),
     currentRank: formData.get("currentRank") || undefined,
-    targetRank:  formData.get("targetRank") || undefined,
-    hours:       formData.get("hours") || undefined,
-    runs:        formData.get("runs") || undefined,
-    addons:      formData.getAll("addons").map(String),
-    notes:       formData.get("notes") || "",
+    targetRank: formData.get("targetRank") || undefined,
+    hours: formData.get("hours") || undefined,
+    runs: formData.get("runs") || undefined,
+    addons: formData.getAll("addons").map(String),
+    notes: formData.get("notes") || "",
   };
 
   const parsed = orderOptionsSchema.safeParse(raw);
@@ -45,7 +45,6 @@ export async function createOrder(
   }
   const opts = parsed.data;
 
-  // Cross-field checks
   if (opts.service === "boosting") {
     if (!opts.currentRank || !opts.targetRank) {
       return { ok: false, error: "Pick both your current and target rank." };
@@ -57,26 +56,35 @@ export async function createOrder(
     return { ok: false, error: "Configure your order — the price is $0." };
   }
 
-  const order = await prisma.order.create({
-    data: {
-      customerId: session.user.id,
-      service: opts.service,
-      title: defaultTitle(opts),
-      description: opts.notes || "",
-      options: opts as object,
-      basePrice,
-      status: "OPEN",
-    },
-    select: { id: true },
+  const order = await prisma.$transaction(async (tx) => {
+    const o = await tx.order.create({
+      data: {
+        customerId: session.user.id,
+        service: opts.service,
+        title: defaultTitle(opts),
+        description: opts.notes || "",
+        options: opts as object,
+        basePrice,
+        status: "OPEN",
+        paymentStatus: "PENDING",
+      },
+      select: { id: true, title: true },
+    });
+    await tx.conversation.create({ data: { orderId: o.id } });
+    await logActivity(tx, {
+      orderId: o.id,
+      type: "CREATED",
+      message: `Order placed: ${o.title}`,
+      actorUserId: session.user.id,
+    });
+    return o;
   });
 
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/pro");
   revalidatePath("/dashboard/admin");
-  redirect(`/dashboard?orderId=${order.id}`);
+  redirect(`/checkout/${order.id}`);
 }
-
-// ---------- BIDDING ----------
 
 const placeBidSchema = z.object({
   orderId: z.string().min(1),
@@ -105,11 +113,25 @@ export async function placeBid(formData: FormData) {
   if (!order) throw new Error("Order not found");
   if (order.status !== "OPEN") throw new Error("Order is no longer open for bids");
 
-  // Pros can update their existing bid (1 active bid per pro per order)
-  await prisma.bid.upsert({
-    where: { orderId_proId: { orderId, proId: user.id } },
-    update: { amount, message, status: "PENDING" },
-    create: { orderId, proId: user.id, amount, message, status: "PENDING" },
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.bid.findUnique({
+      where: { orderId_proId: { orderId, proId: user.id } },
+    });
+    await tx.bid.upsert({
+      where: { orderId_proId: { orderId, proId: user.id } },
+      update: { amount, message, status: "PENDING" },
+      create: { orderId, proId: user.id, amount, message, status: "PENDING" },
+    });
+    await logActivity(tx, {
+      orderId,
+      type: "BID_PLACED",
+      message: existing
+        ? `Pro updated their bid to ${formatCents(amount)}.`
+        : `Pro placed a bid of ${formatCents(amount)}.`,
+      actorUserId: user.id,
+      metadata: { amount },
+      visibleToUser: true,
+    });
   });
 
   revalidatePath("/dashboard/pro");
@@ -122,17 +144,16 @@ const acceptBidSchema = z.object({
 });
 
 export async function acceptBid(formData: FormData) {
-  await requireRole("ADMIN");
+  const admin = await requireRole("ADMIN");
 
   const parsed = acceptBidSchema.safeParse({ bidId: formData.get("bidId") });
   if (!parsed.success) throw new Error("Invalid bid");
   const { bidId } = parsed.data;
 
-  // Atomic: lock the order to the winning Pro and reject the others.
   await prisma.$transaction(async (tx) => {
     const bid = await tx.bid.findUnique({
       where: { id: bidId },
-      include: { order: true },
+      include: { order: true, pro: true },
     });
     if (!bid) throw new Error("Bid not found");
     if (bid.order.status !== "OPEN") {
@@ -162,6 +183,14 @@ export async function acceptBid(formData: FormData) {
       },
       data: { status: "REJECTED" },
     });
+
+    await logActivity(tx, {
+      orderId: bid.orderId,
+      type: "BID_ACCEPTED",
+      message: `Admin accepted ${bid.pro.name ?? bid.pro.email} at ${formatCents(bid.amount)}.`,
+      actorUserId: admin.id,
+      metadata: { bidId: bid.id, amount: bid.amount, proId: bid.proId },
+    });
   });
 
   revalidatePath("/dashboard/admin");
@@ -183,22 +212,38 @@ export async function withdrawBid(formData: FormData) {
     throw new Error("Only pending bids can be withdrawn");
   }
 
-  await prisma.bid.update({
-    where: { id: bidId },
-    data: { status: "WITHDRAWN" },
+  await prisma.$transaction(async (tx) => {
+    await tx.bid.update({
+      where: { id: bidId },
+      data: { status: "WITHDRAWN" },
+    });
+    await logActivity(tx, {
+      orderId: bid.orderId,
+      type: "BID_WITHDRAWN",
+      message: "Pro withdrew their bid.",
+      actorUserId: user.id,
+      visibleToUser: false,
+    });
   });
+
   revalidatePath("/dashboard/pro");
   revalidatePath("/dashboard/admin");
+  revalidatePath(`/dashboard/admin/orders/${bid.orderId}`);
 }
 
-// Self-service: bootstrap upgrade from USER → PRO (anyone can become a Pro).
-// Admin promotion is bootstrapped via ADMIN_EMAILS env var.
 export async function becomePro() {
   const user = await requireUser();
-  if (user.role === "ADMIN") return;
+  if (user.role === "ADMIN" || user.role === "PRO") return;
+  // Mark as having a draft application so the user is sent through the
+  // application flow rather than auto-promoted.
   await prisma.user.update({
     where: { id: user.id },
-    data: { role: "PRO" },
+    data: { proApplicationStatus: "NOT_APPLIED" },
   });
   revalidatePath("/dashboard");
+  redirect("/dashboard/pro/apply");
+}
+
+function formatCents(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
 }

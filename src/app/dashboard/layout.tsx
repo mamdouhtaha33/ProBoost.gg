@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
-import { Crosshair, LayoutGrid, Gavel, ShieldCheck, User2 } from "lucide-react";
+import {
+  Crosshair,
+  LayoutGrid,
+  Gavel,
+  ShieldCheck,
+  User2,
+  UserPlus,
+  Users,
+} from "lucide-react";
 
 export default async function DashboardLayout({
   children,
@@ -14,8 +22,30 @@ export default async function DashboardLayout({
 
   const items = [
     { href: "/dashboard", label: "Overview", icon: LayoutGrid, show: true },
-    { href: "/dashboard/pro", label: "Pro Bids", icon: Gavel, show: role === "PRO" || role === "ADMIN" },
-    { href: "/dashboard/admin", label: "Admin", icon: ShieldCheck, show: role === "ADMIN" },
+    {
+      href: "/dashboard/pro",
+      label: "Pro Bids",
+      icon: Gavel,
+      show: role === "PRO" || role === "ADMIN",
+    },
+    {
+      href: "/dashboard/pro/apply",
+      label: "Apply as Pro",
+      icon: UserPlus,
+      show: role === "USER",
+    },
+    {
+      href: "/dashboard/admin",
+      label: "Admin",
+      icon: ShieldCheck,
+      show: role === "ADMIN",
+    },
+    {
+      href: "/dashboard/admin/applications",
+      label: "Applications",
+      icon: Users,
+      show: role === "ADMIN",
+    },
   ].filter((i) => i.show);
 
   return (
