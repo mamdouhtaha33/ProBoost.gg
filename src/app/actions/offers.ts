@@ -5,8 +5,8 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { logActivityNow } from "@/lib/activity";
 import { rateLimit } from "@/lib/rate-limit";
-import { computeOrderPricing } from "@/lib/order-pricing";
-import { recordCouponRedemption } from "@/lib/coupons";
+import { evaluateCoupon } from "@/lib/coupons";
+import { computeCashbackFor } from "@/lib/cashback";
 import { appendWalletEntry } from "@/lib/wallet";
 import { effectivePriceCents } from "@/lib/offers";
 import type { CashbackCategory, ProductType } from "@prisma/client";
@@ -42,96 +42,146 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
   const walletApplyCents = Math.max(0, Number.parseInt(String(formData.get("walletApplyCents") ?? "0"), 10) || 0);
 
   const subtotal = effectivePriceCents(offer);
+  const userId = session.user.id!;
+  const cashbackCategory = categoryFor(offer.productType);
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { walletCreditCents: true, totalSpentCents: true },
-  });
-  if (!user) return { ok: false, error: "User not found." };
-
-  const pricing = await computeOrderPricing({
-    subtotalCents: subtotal,
-    gameSlug: offer.gameSlug,
-    offerId: offer.id,
-    couponCode: couponCode || undefined,
-    walletApplyCents,
-    walletBalanceCents: user.walletCreditCents,
-    userId: session.user.id,
-    userTotalSpentCents: user.totalSpentCents,
-    cashbackCategory: categoryFor(offer.productType),
-  });
-
-  if (couponCode && pricing.couponError) {
-    return { ok: false, error: pricing.couponError };
-  }
-
-  const order = await prisma.$transaction(async (tx) => {
-    const created = await tx.order.create({
-      data: {
-        customerId: session.user!.id!,
-        title: offer.title,
-        description: offer.summary ?? offer.title,
-        service: offer.service,
-        game: offer.gameSlug,
-        gameSlug: offer.gameSlug,
-        productType: offer.productType,
-        offerId: offer.id,
-        deliveryMode,
-        options: { offerSlug: offer.slug, deliveryMode },
-        basePrice: subtotal,
-        finalPrice: pricing.totalCents,
-        couponCode: pricing.couponCode,
-        couponDiscountCents: pricing.couponDiscountCents,
-        walletAppliedCents: pricing.walletAppliedCents,
-        cashbackEarnedCents: pricing.cashbackEarnedCents,
-        paymentStatus: pricing.totalCents === 0 ? "PAID" : "PENDING",
-        status: "OPEN",
-      },
-    });
-    await tx.conversation.create({ data: { orderId: created.id } });
-    await tx.offer.update({
-      where: { id: offer.id },
-      data: { ordersCount: { increment: 1 } },
-    });
-
-    if (pricing.walletAppliedCents > 0) {
-      await appendWalletEntry(tx, {
-        userId: session.user!.id!,
-        kind: "CASHBACK_USED",
-        amountCents: -pricing.walletAppliedCents,
-        orderId: created.id,
-        description: `Applied wallet credit to order ${created.id}`,
+  let couponError: string | undefined;
+  let createdId: string | undefined;
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const dbUser = await tx.user.findUnique({
+        where: { id: userId },
+        select: { walletCreditCents: true, totalSpentCents: true },
       });
-    }
+      if (!dbUser) throw new Error("USER_NOT_FOUND");
 
-    if (pricing.couponCode) {
-      const coupon = await tx.coupon.findUnique({ where: { code: pricing.couponCode } });
-      if (coupon) {
+      let couponDiscountCents = 0;
+      let couponPersistedCode: string | undefined;
+      let couponIdForRedemption: string | undefined;
+      if (couponCode) {
+        const evalResult = await evaluateCoupon(
+          {
+            code: couponCode,
+            userId,
+            orderSubtotalCents: subtotal,
+            gameSlug: offer.gameSlug,
+            offerId: offer.id,
+          },
+          tx,
+        );
+        if (!evalResult.ok) {
+          throw new Error(`COUPON:${evalResult.reason}`);
+        }
+        couponDiscountCents = evalResult.discountCents;
+        couponPersistedCode = evalResult.coupon.code;
+        couponIdForRedemption = evalResult.coupon.id;
+      }
+
+      const afterCoupon = Math.max(0, subtotal - couponDiscountCents);
+      const walletApplied = Math.min(
+        Math.max(0, dbUser.walletCreditCents),
+        Math.max(0, walletApplyCents),
+        afterCoupon,
+      );
+      const totalCents = Math.max(0, afterCoupon - walletApplied);
+
+      const cashback = await computeCashbackFor({
+        userTotalSpentCents: dbUser.totalSpentCents,
+        category: cashbackCategory,
+        amountCents: totalCents,
+      });
+
+      const created = await tx.order.create({
+        data: {
+          customerId: userId,
+          title: offer.title,
+          description: offer.summary ?? offer.title,
+          service: offer.service,
+          game: offer.gameSlug,
+          gameSlug: offer.gameSlug,
+          productType: offer.productType,
+          offerId: offer.id,
+          deliveryMode,
+          options: { offerSlug: offer.slug, deliveryMode },
+          basePrice: subtotal,
+          finalPrice: totalCents,
+          couponCode: couponPersistedCode,
+          couponDiscountCents,
+          walletAppliedCents: walletApplied,
+          cashbackEarnedCents: cashback.cashbackCents,
+          paymentStatus: totalCents === 0 ? "PAID" : "PENDING",
+          status: "OPEN",
+        },
+      });
+      await tx.conversation.create({ data: { orderId: created.id } });
+      await tx.offer.update({
+        where: { id: offer.id },
+        data: { ordersCount: { increment: 1 } },
+      });
+
+      if (walletApplied > 0) {
+        await appendWalletEntry(tx, {
+          userId,
+          kind: "CASHBACK_USED",
+          amountCents: -walletApplied,
+          orderId: created.id,
+          description: `Applied wallet credit to order ${created.id}`,
+        });
+      }
+
+      if (couponIdForRedemption && couponPersistedCode) {
         await tx.couponRedemption.create({
           data: {
-            couponId: coupon.id,
-            userId: session.user!.id!,
+            couponId: couponIdForRedemption,
+            userId,
             orderId: created.id,
-            amountAppliedCents: pricing.couponDiscountCents,
+            amountAppliedCents: couponDiscountCents,
           },
         });
         await tx.coupon.update({
-          where: { id: coupon.id },
+          where: { id: couponIdForRedemption },
           data: { usesCount: { increment: 1 } },
         });
       }
+
+      // Cashback is credited at payment time (markPaymentPaid). Free orders
+      // (totalCents === 0) are auto-PAID above, so credit immediately.
+      if (totalCents === 0 && cashback.cashbackCents > 0) {
+        await appendWalletEntry(tx, {
+          userId,
+          kind: "CASHBACK_EARNED",
+          amountCents: cashback.cashbackCents,
+          orderId: created.id,
+          description: `Cashback earned on order ${created.id}`,
+        });
+      }
+
+      return { id: created.id };
+    });
+    createdId = result.id;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.startsWith("COUPON:")) {
+      couponError = msg.slice("COUPON:".length);
+    } else if (msg === "USER_NOT_FOUND") {
+      return { ok: false, error: "User not found." };
+    } else {
+      throw err;
     }
-    return created;
-  });
+  }
+
+  if (couponError) {
+    return { ok: false, error: couponError };
+  }
+
+  if (!createdId) return { ok: false, error: "Could not create order." };
 
   await logActivityNow({
-    orderId: order.id,
-    actorUserId: session.user.id,
+    orderId: createdId,
+    actorUserId: userId,
     type: "CREATED",
     message: `Order placed from offer "${offer.title}"`,
   });
 
-  redirect(`/checkout/${order.id}`);
+  redirect(`/checkout/${createdId}`);
 }
-
-void recordCouponRedemption;

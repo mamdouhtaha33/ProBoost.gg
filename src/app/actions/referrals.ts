@@ -19,17 +19,22 @@ export async function ensureReferralCode(): Promise<string> {
   const sessionUser = await requireUser();
   const dbUser = await prisma.user.findUnique({ where: { id: sessionUser.id } });
   if (dbUser?.referralCode) return dbUser.referralCode;
-  let code = makeReferralCode();
-  for (let i = 0; i < 5; i++) {
-    const exists = await prisma.user.findUnique({ where: { referralCode: code } });
-    if (!exists) break;
-    code = makeReferralCode();
+
+  for (let i = 0; i < 8; i++) {
+    const code = makeReferralCode();
+    try {
+      await prisma.user.update({
+        where: { id: sessionUser.id },
+        data: { referralCode: code },
+      });
+      return code;
+    } catch (err) {
+      const e = err as { code?: string };
+      if (e?.code === "P2002") continue;
+      throw err;
+    }
   }
-  await prisma.user.update({
-    where: { id: sessionUser.id },
-    data: { referralCode: code },
-  });
-  return code;
+  throw new Error("Could not generate a unique referral code. Please try again.");
 }
 
 const inviteSchema = z.object({

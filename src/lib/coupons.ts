@@ -1,20 +1,25 @@
 import { prisma } from "@/lib/prisma";
-import type { Coupon } from "@prisma/client";
+import type { Coupon, Prisma } from "@prisma/client";
 
 export type CouponEvalResult =
   | { ok: true; coupon: Coupon; discountCents: number }
   | { ok: false; reason: string };
 
-export async function evaluateCoupon(opts: {
-  code: string;
-  userId?: string | null;
-  orderSubtotalCents: number;
-  gameSlug?: string;
-  offerId?: string;
-}): Promise<CouponEvalResult> {
+type DbClient = Prisma.TransactionClient | typeof prisma;
+
+export async function evaluateCoupon(
+  opts: {
+    code: string;
+    userId?: string | null;
+    orderSubtotalCents: number;
+    gameSlug?: string;
+    offerId?: string;
+  },
+  client: DbClient = prisma,
+): Promise<CouponEvalResult> {
   const code = opts.code.trim().toUpperCase();
   if (!code) return { ok: false, reason: "Enter a code." };
-  const coupon = await prisma.coupon.findUnique({ where: { code } });
+  const coupon = await client.coupon.findUnique({ where: { code } });
   if (!coupon) return { ok: false, reason: "Coupon not found." };
   const now = new Date();
   if (coupon.status !== "ACTIVE") return { ok: false, reason: "Coupon is not active." };
@@ -34,7 +39,7 @@ export async function evaluateCoupon(opts: {
     return { ok: false, reason: "Coupon not valid for your account." };
   }
   if (opts.userId && coupon.perUserLimit > 0) {
-    const used = await prisma.couponRedemption.count({
+    const used = await client.couponRedemption.count({
       where: { couponId: coupon.id, userId: opts.userId },
     });
     if (used >= coupon.perUserLimit) {

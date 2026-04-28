@@ -1,6 +1,7 @@
 import { PaymentProvider, PaymentStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { logActivity } from "@/lib/activity";
+import { appendWalletEntry } from "@/lib/wallet";
 
 export type CreateCheckoutInput = {
   orderId: string;
@@ -322,10 +323,26 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
       },
     });
 
-    await tx.order.update({
+    const order = await tx.order.update({
       where: { id: orderId },
       data: { paymentStatus: "PAID" },
     });
+
+    if (order.cashbackEarnedCents > 0) {
+      const alreadyCredited = await tx.walletEntry.findFirst({
+        where: { orderId, kind: "CASHBACK_EARNED" },
+        select: { id: true },
+      });
+      if (!alreadyCredited) {
+        await appendWalletEntry(tx, {
+          userId: order.customerId,
+          kind: "CASHBACK_EARNED",
+          amountCents: order.cashbackEarnedCents,
+          orderId: order.id,
+          description: `Cashback earned on order ${order.id}`,
+        });
+      }
+    }
 
     await tx.transaction.create({
       data: {
