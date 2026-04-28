@@ -6,7 +6,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
-import { sendEmail, renderHtml } from "@/lib/email";
+import { sendEmail, renderHtml, escapeHtml } from "@/lib/email";
 import { recomputeProStats } from "@/lib/pro-rank";
 
 const reviewSchema = z.object({
@@ -90,7 +90,7 @@ export async function leaveReview(formData: FormData) {
         subject: `You got a ${rating}★ review on ProBoost.gg`,
         html: renderHtml({
           title: `New ${rating}★ review`,
-          bodyHtml: `<p>${body || "Great work — the customer left you a positive review."}</p>`,
+          bodyHtml: `<p>${escapeHtml(body || "Great work — the customer left you a positive review.")}</p>`,
           ctaUrl: `${process.env.NEXTAUTH_URL ?? ""}/dashboard/pro/orders/${orderId}`,
           ctaLabel: "View order",
         }),

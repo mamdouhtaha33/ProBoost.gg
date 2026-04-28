@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { logActivity } from "@/lib/activity";
 import { logAudit } from "@/lib/audit";
 import { notify } from "@/lib/notifications";
-import { sendEmail, renderHtml } from "@/lib/email";
+import { sendEmail, renderHtml, escapeHtml } from "@/lib/email";
 
 const openDisputeSchema = z.object({
   orderId: z.string().min(1),
@@ -102,7 +102,7 @@ export async function openDispute(formData: FormData) {
       subject: `Dispute opened on order ${order.title}`,
       html: renderHtml({
         title: "A dispute was opened",
-        bodyHtml: `<p>A dispute (${reason}) was opened on order <strong>${order.title}</strong>.</p>`,
+        bodyHtml: `<p>A dispute (${escapeHtml(reason)}) was opened on order <strong>${escapeHtml(order.title)}</strong>.</p>`,
         ctaUrl: `${process.env.NEXTAUTH_URL ?? ""}/dashboard/disputes/${dispute.id}`,
         ctaLabel: "View dispute",
       }),

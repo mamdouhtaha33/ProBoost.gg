@@ -12,7 +12,7 @@ import {
   getGameBySlug,
   orderOptionsSchema,
 } from "@/lib/games";
-import { sendEmail, renderHtml } from "@/lib/email";
+import { sendEmail, renderHtml, escapeHtml } from "@/lib/email";
 import { notify } from "@/lib/notifications";
 import { logAudit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
@@ -120,7 +120,7 @@ export async function createOrder(
       subject: `Your ProBoost.gg order is live — ${order.title}`,
       html: renderHtml({
         title: "Order placed",
-        bodyHtml: `<p>We received your order: <strong>${order.title}</strong>.</p><p>Pros are bidding now. You'll get an email when one is selected.</p>`,
+        bodyHtml: `<p>We received your order: <strong>${escapeHtml(order.title)}</strong>.</p><p>Pros are bidding now. You'll get an email when one is selected.</p>`,
         ctaUrl: `${process.env.NEXTAUTH_URL ?? ""}/dashboard/orders/${order.id}`,
         ctaLabel: "Track order",
       }),
@@ -338,7 +338,7 @@ async function acceptBidById(
         subject: "Your bid was accepted",
         html: renderHtml({
           title: "Bid accepted!",
-          bodyHtml: `<p>Your bid on <strong>${fullBid.order.title}</strong> was accepted. Open the order to start working.</p>`,
+          bodyHtml: `<p>Your bid on <strong>${escapeHtml(fullBid.order.title)}</strong> was accepted. Open the order to start working.</p>`,
           ctaUrl: `${process.env.NEXTAUTH_URL ?? ""}/dashboard/pro/orders/${fullBid.order.id}`,
           ctaLabel: "Open order",
         }),
@@ -438,6 +438,7 @@ export async function becomePro() {
 }
 
 export async function markCompletedAndRecompute(orderId: string) {
+  await requireRole("ADMIN");
   const order = await prisma.order.findUnique({ where: { id: orderId } });
   if (order?.proId) await recomputeProStats(order.proId);
 }

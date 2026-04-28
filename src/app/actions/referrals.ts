@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth, requireUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { sendEmail, renderHtml } from "@/lib/email";
+import { sendEmail, renderHtml, escapeHtml } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { notify } from "@/lib/notifications";
 import { REFERRAL_REWARD_CENTS } from "@/lib/referrals";
@@ -65,7 +65,7 @@ export async function inviteByEmail(formData: FormData) {
     subject: `${sessionUser.name ?? "A friend"} invited you to ProBoost.gg`,
     html: renderHtml({
       title: "You've been invited",
-      bodyHtml: `<p>${sessionUser.name ?? "A friend"} thinks you'll love ProBoost.gg. Sign up using their link to give them a $10 wallet credit.</p>`,
+      bodyHtml: `<p>${escapeHtml(sessionUser.name ?? "A friend")} thinks you'll love ProBoost.gg. Sign up using their link to give them a $10 wallet credit.</p>`,
       ctaUrl: link,
       ctaLabel: "Join ProBoost.gg",
     }),

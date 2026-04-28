@@ -187,6 +187,14 @@ async function createStripeCheckout(
   };
 }
 
+function splitName(full: string | null | undefined): { first: string; last: string } {
+  const trimmed = (full ?? "").trim();
+  if (!trimmed) return { first: "ProBoost", last: "Customer" };
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) return { first: parts[0], last: parts[0] };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
+}
+
 async function createPaymobCheckout(
   input: CreateCheckoutInput,
   currency: string,
@@ -201,6 +209,14 @@ async function createPaymobCheckout(
   const apiKey = process.env.PAYMOB_API_KEY!;
   const integrationId = process.env.PAYMOB_INTEGRATION_ID!;
   const iframeId = process.env.PAYMOB_IFRAME_ID;
+
+  const order = await prisma.order.findUnique({
+    where: { id: input.orderId },
+    select: { customer: { select: { name: true, email: true } } },
+  });
+  const customer = order?.customer;
+  const { first, last } = splitName(customer?.name);
+  const email = customer?.email && customer.email.includes("@") ? customer.email : "user@proboost.gg";
 
   let authToken: string;
   try {
@@ -241,16 +257,16 @@ async function createPaymobCheckout(
       expiration: 3600,
       order_id: paymobOrder.id,
       billing_data: {
-        email: "user@proboost.gg",
-        first_name: "ProBoost",
-        last_name: "Customer",
+        email,
+        first_name: first,
+        last_name: last,
         phone_number: "+10000000000",
         country: "EG",
-        city: "Cairo",
-        street: "N/A",
-        building: "N/A",
-        floor: "N/A",
-        apartment: "N/A",
+        city: "NA",
+        street: "NA",
+        building: "NA",
+        floor: "NA",
+        apartment: "NA",
       },
       currency,
       integration_id: Number(integrationId),
@@ -306,12 +322,12 @@ async function createPaymobCheckout(
  * webhook handlers. Idempotent — safe to call multiple times.
  */
 export async function markPaymentPaid(orderId: string, providerRef?: string) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.payment.findUnique({ where: { orderId } });
     if (!existing) throw new Error("Payment not found");
 
     if (existing.status === "PAID") {
-      return { alreadyPaid: true, payment: existing };
+      return { alreadyPaid: true, payment: existing, customerId: null as string | null };
     }
 
     const payment = await tx.payment.update({
@@ -326,6 +342,11 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
     const order = await tx.order.update({
       where: { id: orderId },
       data: { paymentStatus: "PAID" },
+    });
+
+    await tx.user.update({
+      where: { id: order.customerId },
+      data: { totalSpentCents: { increment: payment.amount } },
     });
 
     if (order.cashbackEarnedCents > 0) {
@@ -364,8 +385,15 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
       metadata: { provider: payment.provider, amount: payment.amount },
     });
 
-    return { alreadyPaid: false, payment };
+    return { alreadyPaid: false, payment, customerId: order.customerId };
   });
+
+  if (!result.alreadyPaid && result.customerId) {
+    const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
+    await maybeAttributeFirstOrder(result.customerId, orderId);
+  }
+
+  return { alreadyPaid: result.alreadyPaid, payment: result.payment };
 }
 
 export async function markPaymentFailed(
