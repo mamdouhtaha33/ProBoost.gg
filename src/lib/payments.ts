@@ -351,6 +351,67 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
       data: { totalSpentCents: { increment: payment.amount } },
     });
 
+    // Apply the deferred wallet debit recorded at order creation time.
+    // buyOffer no longer debits the wallet up front so an abandoned
+    // checkout doesn't permanently consume customer credit; we replay it
+    // here once the payment is actually confirmed. Idempotent via the
+    // CASHBACK_USED ledger entry: re-runs find an existing entry and skip.
+    if (order.walletAppliedCents > 0) {
+      const alreadyDebited = await tx.walletEntry.findFirst({
+        where: { orderId, kind: "CASHBACK_USED" },
+        select: { id: true },
+      });
+      if (!alreadyDebited) {
+        try {
+          await appendWalletEntry(tx, {
+            userId: order.customerId,
+            kind: "CASHBACK_USED",
+            amountCents: -order.walletAppliedCents,
+            orderId: order.id,
+            description: `Applied wallet credit to order ${order.id}`,
+          });
+        } catch (err) {
+          // The wallet may have been spent on another order between order
+          // creation and payment confirmation. The customer already paid
+          // the discounted amount via the provider, so we can't roll the
+          // payment back here. Log so an admin can reconcile manually.
+          console.error(
+            `[markPaymentPaid] wallet debit failed for order ${order.id}:`,
+            err,
+          );
+        }
+      }
+    }
+
+    // Apply the deferred coupon redemption. The CouponRedemption row has
+    // a unique([couponId, orderId]) constraint, so a P2002 means it was
+    // already redeemed (idempotent on retry / replay).
+    if (order.couponCode) {
+      const coupon = await tx.coupon.findUnique({
+        where: { code: order.couponCode },
+      });
+      if (coupon) {
+        try {
+          await tx.couponRedemption.create({
+            data: {
+              couponId: coupon.id,
+              userId: order.customerId,
+              orderId: order.id,
+              amountAppliedCents: order.couponDiscountCents,
+            },
+          });
+          await tx.coupon.update({
+            where: { id: coupon.id },
+            data: { usesCount: { increment: 1 } },
+          });
+        } catch (err) {
+          const code = (err as { code?: string }).code;
+          if (code !== "P2002") throw err;
+          // Already redeemed for this order — idempotent no-op.
+        }
+      }
+    }
+
     if (order.cashbackEarnedCents > 0) {
       const alreadyCredited = await tx.walletEntry.findFirst({
         where: { orderId, kind: "CASHBACK_EARNED" },

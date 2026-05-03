@@ -141,41 +141,47 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
         data: { ordersCount: { increment: 1 } },
       });
 
-      if (walletApplied > 0) {
-        await appendWalletEntry(tx, {
-          userId,
-          kind: "CASHBACK_USED",
-          amountCents: -walletApplied,
-          orderId: created.id,
-          description: `Applied wallet credit to order ${created.id}`,
-        });
-      }
-
-      if (couponIdForRedemption && couponPersistedCode) {
-        await tx.couponRedemption.create({
-          data: {
-            couponId: couponIdForRedemption,
+      // Wallet debit, coupon redemption, and cashback credit are deferred
+      // to markPaymentPaid for non-free orders so an abandoned checkout
+      // doesn't permanently consume the customer's wallet credit, exhaust
+      // a coupon's maxUses, or burn their per-user redemption limit. The
+      // intent is persisted on the order (walletAppliedCents, couponCode,
+      // couponDiscountCents, cashbackEarnedCents) and replayed at payment
+      // time. Free orders ($0 — coupon + wallet covered the price) skip
+      // markPaymentPaid entirely, so we apply the side effects inline.
+      if (totalCents === 0) {
+        if (walletApplied > 0) {
+          await appendWalletEntry(tx, {
             userId,
+            kind: "CASHBACK_USED",
+            amountCents: -walletApplied,
             orderId: created.id,
-            amountAppliedCents: couponDiscountCents,
-          },
-        });
-        await tx.coupon.update({
-          where: { id: couponIdForRedemption },
-          data: { usesCount: { increment: 1 } },
-        });
-      }
-
-      // Cashback is credited at payment time (markPaymentPaid). Free orders
-      // (totalCents === 0) are auto-PAID above, so credit immediately.
-      if (totalCents === 0 && cashback.cashbackCents > 0) {
-        await appendWalletEntry(tx, {
-          userId,
-          kind: "CASHBACK_EARNED",
-          amountCents: cashback.cashbackCents,
-          orderId: created.id,
-          description: `Cashback earned on order ${created.id}`,
-        });
+            description: `Applied wallet credit to order ${created.id}`,
+          });
+        }
+        if (couponIdForRedemption && couponPersistedCode) {
+          await tx.couponRedemption.create({
+            data: {
+              couponId: couponIdForRedemption,
+              userId,
+              orderId: created.id,
+              amountAppliedCents: couponDiscountCents,
+            },
+          });
+          await tx.coupon.update({
+            where: { id: couponIdForRedemption },
+            data: { usesCount: { increment: 1 } },
+          });
+        }
+        if (cashback.cashbackCents > 0) {
+          await appendWalletEntry(tx, {
+            userId,
+            kind: "CASHBACK_EARNED",
+            amountCents: cashback.cashbackCents,
+            orderId: created.id,
+            description: `Cashback earned on order ${created.id}`,
+          });
+        }
       }
 
       return { id: created.id, wasFree: totalCents === 0, title: offer.title };
