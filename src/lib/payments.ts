@@ -467,25 +467,33 @@ export async function markPaymentFailed(
   orderId: string,
   errorMessage: string,
 ) {
-  // Idempotency guard: never downgrade a PAID payment back to FAILED. If a
-  // failure webhook arrives after a successful one (provider retry, race
-  // between IPN events, etc.) we ignore it so we don't end up with a FAILED
-  // payment but already-incremented totalSpentCents / credited cashback.
-  const existing = await prisma.payment.findUnique({ where: { orderId } });
-  if (!existing) return { skipped: true as const, reason: "no-payment" };
-  if (existing.status === "PAID") {
-    return { skipped: true as const, reason: "already-paid" };
-  }
-
-  await prisma.payment.update({
-    where: { orderId },
+  // Atomic idempotency guard: never downgrade a PAID payment back to
+  // FAILED. A read-then-write pattern would race with markPaymentPaid
+  // (e.g. two Paymob webhooks arriving near-simultaneously, one success
+  // and one delayed failure retry) and could overwrite the PAID row
+  // *after* the financial side effects (totalSpentCents, cashback,
+  // coupon redemption) have already committed. The conditional
+  // updateMany below refuses to flip a row whose status is PAID.
+  const flip = await prisma.payment.updateMany({
+    where: { orderId, status: { not: "PAID" } },
     data: {
       status: "FAILED" satisfies PaymentStatus,
       lastError: errorMessage,
     },
   });
-  await prisma.order.update({
-    where: { id: orderId },
+  if (flip.count === 0) {
+    const existing = await prisma.payment.findUnique({
+      where: { orderId },
+      select: { status: true },
+    });
+    if (!existing) return { skipped: true as const, reason: "no-payment" };
+    return { skipped: true as const, reason: "already-paid" };
+  }
+
+  // Mirror the conditional guard on the Order so we never flip a PAID
+  // order's payment status to FAILED either.
+  await prisma.order.updateMany({
+    where: { id: orderId, paymentStatus: { not: "PAID" } },
     data: { paymentStatus: "FAILED" },
   });
   await logActivity(prisma, {
