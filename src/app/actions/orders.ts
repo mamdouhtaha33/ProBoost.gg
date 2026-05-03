@@ -439,8 +439,11 @@ export async function becomePro() {
 
 export async function markCompletedAndRecompute(orderId: string) {
   await requireRole("ADMIN");
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
-  if (order?.proId) await recomputeProStats(order.proId);
+  const order = await prisma.order.update({
+    where: { id: orderId },
+    data: { status: "COMPLETED" },
+  });
+  if (order.proId) await recomputeProStats(order.proId);
 }
 
 function formatCents(cents: number) {

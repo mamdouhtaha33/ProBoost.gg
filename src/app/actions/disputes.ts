@@ -209,9 +209,9 @@ export async function updateDisputeStatus(formData: FormData) {
         resolution: resolution ?? null,
         assigneeId: admin.id,
         // Preserve original close timestamp when re-saving an already-closed
-        // dispute. Leave the column untouched (undefined) when transitioning
-        // to a non-closing state.
-        closedAt: closing ? (before.closedAt ?? new Date()) : undefined,
+        // dispute, set it once when first closing, and clear it when
+        // reopening so a stale timestamp doesn't linger on an OPEN dispute.
+        closedAt: closing ? (before.closedAt ?? new Date()) : null,
       },
     });
     await logAudit(tx, {

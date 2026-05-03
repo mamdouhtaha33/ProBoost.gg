@@ -29,14 +29,24 @@ export async function evaluateCoupon(
     return { ok: false, reason: "Coupon usage limit reached." };
   if (opts.orderSubtotalCents < coupon.minOrderCents)
     return { ok: false, reason: `Order subtotal must be at least $${(coupon.minOrderCents / 100).toFixed(2)}.` };
-  if (coupon.scope === "GAME" && coupon.scopeRefId && opts.gameSlug && coupon.scopeRefId !== opts.gameSlug) {
-    return { ok: false, reason: "Coupon not valid for this game." };
+  // Scope checks: if a coupon is restricted to a specific game/offer/user,
+  // the caller MUST supply the corresponding identifier; otherwise we have to
+  // reject (defense-in-depth so a future caller cannot accidentally bypass
+  // a scoped coupon by omitting context).
+  if (coupon.scope === "GAME" && coupon.scopeRefId) {
+    if (!opts.gameSlug || coupon.scopeRefId !== opts.gameSlug) {
+      return { ok: false, reason: "Coupon not valid for this game." };
+    }
   }
-  if (coupon.scope === "OFFER" && coupon.scopeRefId && opts.offerId && coupon.scopeRefId !== opts.offerId) {
-    return { ok: false, reason: "Coupon not valid for this offer." };
+  if (coupon.scope === "OFFER" && coupon.scopeRefId) {
+    if (!opts.offerId || coupon.scopeRefId !== opts.offerId) {
+      return { ok: false, reason: "Coupon not valid for this offer." };
+    }
   }
-  if (coupon.scope === "USER" && coupon.scopeRefId && opts.userId && coupon.scopeRefId !== opts.userId) {
-    return { ok: false, reason: "Coupon not valid for your account." };
+  if (coupon.scope === "USER" && coupon.scopeRefId) {
+    if (!opts.userId || coupon.scopeRefId !== opts.userId) {
+      return { ok: false, reason: "Coupon not valid for your account." };
+    }
   }
   if (opts.userId && coupon.perUserLimit > 0) {
     const used = await client.couponRedemption.count({
