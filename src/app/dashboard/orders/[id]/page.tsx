@@ -223,7 +223,18 @@ export default async function CustomerOrderPage({
 
       {order.status === "COMPLETED" && order.proId && (
         <section>
-          <TipForm orderId={order.id} alreadyTipped={Boolean(order.tip)} />
+          <TipForm
+            orderId={order.id}
+            alreadyTipped={Boolean(order.tip)}
+            walletBalanceCents={
+              (
+                await prisma.user.findUnique({
+                  where: { id: session.user.id },
+                  select: { walletCreditCents: true },
+                })
+              )?.walletCreditCents ?? 0
+            }
+          />
         </section>
       )}
     </div>

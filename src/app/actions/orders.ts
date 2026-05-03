@@ -11,6 +11,7 @@ import {
   defaultOrderTitle,
   getGameBySlug,
   orderOptionsSchema,
+  validateOrderOptionsForGame,
 } from "@/lib/games";
 import { sendEmail, renderHtml, escapeHtml } from "@/lib/email";
 import { notify } from "@/lib/notifications";
@@ -60,6 +61,11 @@ export async function createOrder(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid form" };
   }
   const opts = parsed.data;
+
+  const optsErr = validateOrderOptionsForGame(game, opts);
+  if (optsErr) {
+    return { ok: false, error: optsErr };
+  }
 
   if (opts.service === "boosting") {
     if (!opts.currentRank || !opts.targetRank) {

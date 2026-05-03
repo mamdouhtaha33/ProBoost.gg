@@ -86,14 +86,19 @@ export async function maybeAttributeFirstOrder(userId: string, orderId: string):
   if (!existing) return;
   if (existing.status === "REWARD_GRANTED") return;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.referral.update({
-      where: { id: existing.id },
+  // Atomic guard: only one concurrent caller wins the status flip from
+  // PENDING -> REWARD_GRANTED. The loser sees count === 0 and bails out
+  // before touching the wallet, so we cannot double-credit the referrer
+  // when two orders complete back-to-back.
+  const granted = await prisma.$transaction(async (tx) => {
+    const flip = await tx.referral.updateMany({
+      where: { id: existing.id, status: { not: "REWARD_GRANTED" } },
       data: {
         status: "REWARD_GRANTED",
         attributedOrderId: orderId,
       },
     });
+    if (flip.count === 0) return false;
     await appendWalletEntry(tx, {
       userId: user.referredById!,
       kind: "REFERRAL_REWARD",
@@ -108,7 +113,10 @@ export async function maybeAttributeFirstOrder(userId: string, orderId: string):
       targetId: existing.id,
       after: { rewardCents: existing.rewardCents, orderId },
     });
+    return true;
   });
+
+  if (!granted) return;
 
   await notify(prisma, {
     userId: user.referredById,

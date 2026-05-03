@@ -248,10 +248,19 @@ export function listPublishedGames(): GameDef[] {
 }
 
 // ----- Form payload schema (game-aware) -----
+// region/platform are stored as canonical lowercase ids; trim + lowercase
+// here so a crafted submission like "OCE" or "oce " can't sidestep the
+// surcharge check downstream.
+const idString = z
+  .string()
+  .min(1)
+  .max(40)
+  .transform((s) => s.trim().toLowerCase());
+
 export const orderOptionsSchema = z.object({
   service: z.enum(["boosting", "coaching", "carry"]),
-  region: z.string().min(1).max(40),
-  platform: z.string().min(1).max(40),
+  region: idString,
+  platform: idString,
   currentRank: z.string().optional(),
   targetRank: z.string().optional(),
   hours: z.coerce.number().int().min(1).max(20).optional(),
@@ -261,6 +270,21 @@ export const orderOptionsSchema = z.object({
 });
 
 export type OrderOptions = z.infer<typeof orderOptionsSchema>;
+
+// Validates that submitted region/platform actually exist in the target
+// game's catalog. Returns null on success, or an error message string.
+export function validateOrderOptionsForGame(
+  game: GameDef,
+  opts: OrderOptions,
+): string | null {
+  if (!game.regions.some((r) => r.id === opts.region)) {
+    return "Pick a valid region for this game.";
+  }
+  if (!game.platforms.some((p) => p.id === opts.platform)) {
+    return "Pick a valid platform for this game.";
+  }
+  return null;
+}
 
 // ----- Pricing engine -----
 export function computeBasePriceFor(game: GameDef, opts: OrderOptions): number {
