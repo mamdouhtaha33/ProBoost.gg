@@ -328,18 +328,30 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
     const existing = await tx.payment.findUnique({ where: { orderId } });
     if (!existing) throw new Error("Payment not found");
 
-    if (existing.status === "PAID") {
-      return { alreadyPaid: true, payment: existing, customerId: null as string | null };
-    }
-
-    const payment = await tx.payment.update({
-      where: { orderId },
+    // Atomic status flip. Two concurrent webhook retries reading
+    // REQUIRES_ACTION at the same time would both pass a read-then-update
+    // guard under READ COMMITTED, double-incrementing totalSpentCents,
+    // crediting cashback twice, and creating duplicate ledger entries.
+    // updateMany with status: { not: "PAID" } guarantees only one caller
+    // wins the flip; the loser sees count === 0 and bails out before
+    // touching any side effects. Mirrors the pattern in markPaymentFailed.
+    const flip = await tx.payment.updateMany({
+      where: { orderId, status: { not: "PAID" } },
       data: {
         status: "PAID",
         paidAt: new Date(),
         providerRef: providerRef ?? existing.providerRef,
       },
     });
+    if (flip.count === 0) {
+      const current = await tx.payment.findUnique({ where: { orderId } });
+      return {
+        alreadyPaid: true,
+        payment: current ?? existing,
+        customerId: null as string | null,
+      };
+    }
+    const payment = await tx.payment.findUniqueOrThrow({ where: { orderId } });
 
     const order = await tx.order.update({
       where: { id: orderId },
@@ -383,31 +395,72 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
       }
     }
 
-    // Apply the deferred coupon redemption. The CouponRedemption row has
-    // a unique([couponId, orderId]) constraint, so a P2002 means it was
-    // already redeemed (idempotent on retry / replay).
+    // Apply the deferred coupon redemption. Because evaluateCoupon ran
+    // at order-creation time, a user could create N orders simultaneously
+    // and pass the per-user-limit check on each (zero redemptions exist
+    // yet). We re-validate the per-user limit and global maxUses HERE,
+    // at payment time, so a coupon's limits are honored even if the
+    // customer paid for several pre-validated orders. The customer
+    // already paid the discounted amount, so on limit breach we skip
+    // recording the redemption and log for admin reconciliation rather
+    // than rolling back the payment. The CouponRedemption row has a
+    // unique([couponId, orderId]) constraint, so a P2002 means the same
+    // order is being replayed (idempotent on webhook retry).
     if (order.couponCode) {
       const coupon = await tx.coupon.findUnique({
         where: { code: order.couponCode },
       });
       if (coupon) {
-        try {
-          await tx.couponRedemption.create({
-            data: {
-              couponId: coupon.id,
-              userId: order.customerId,
-              orderId: order.id,
-              amountAppliedCents: order.couponDiscountCents,
+        const userRedemptions = await tx.couponRedemption.count({
+          where: { couponId: coupon.id, userId: order.customerId },
+        });
+        const overPerUser =
+          coupon.perUserLimit > 0 && userRedemptions >= coupon.perUserLimit;
+        const overGlobal =
+          coupon.maxUses != null && coupon.usesCount >= coupon.maxUses;
+        if (overPerUser || overGlobal) {
+          console.warn(
+            `[markPaymentPaid] coupon ${coupon.code} limit exceeded at payment time for order ${order.id}`,
+            {
+              userRedemptions,
+              perUserLimit: coupon.perUserLimit,
+              usesCount: coupon.usesCount,
+              maxUses: coupon.maxUses,
+              overPerUser,
+              overGlobal,
             },
-          });
-          await tx.coupon.update({
-            where: { id: coupon.id },
-            data: { usesCount: { increment: 1 } },
-          });
-        } catch (err) {
-          const code = (err as { code?: string }).code;
-          if (code !== "P2002") throw err;
-          // Already redeemed for this order — idempotent no-op.
+          );
+        } else {
+          try {
+            await tx.couponRedemption.create({
+              data: {
+                couponId: coupon.id,
+                userId: order.customerId,
+                orderId: order.id,
+                amountAppliedCents: order.couponDiscountCents,
+              },
+            });
+            // Atomic: only increment if the limit hasn't been reached
+            // since we read it. If maxUses is null, no upper bound.
+            if (coupon.maxUses == null) {
+              await tx.coupon.update({
+                where: { id: coupon.id },
+                data: { usesCount: { increment: 1 } },
+              });
+            } else {
+              await tx.coupon.updateMany({
+                where: {
+                  id: coupon.id,
+                  usesCount: { lt: coupon.maxUses },
+                },
+                data: { usesCount: { increment: 1 } },
+              });
+            }
+          } catch (err) {
+            const code = (err as { code?: string }).code;
+            if (code !== "P2002") throw err;
+            // Already redeemed for this order — idempotent no-op.
+          }
         }
       }
     }
