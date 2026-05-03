@@ -156,9 +156,13 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
         });
       }
 
-      return { id: created.id };
+      return { id: created.id, wasFree: totalCents === 0 };
     });
     createdId = result.id;
+    if (result.wasFree) {
+      const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
+      await maybeAttributeFirstOrder(userId, result.id);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.startsWith("COUPON:")) {

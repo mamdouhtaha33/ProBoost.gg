@@ -10,6 +10,7 @@ import { sendEmail, renderHtml, escapeHtml } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { notify } from "@/lib/notifications";
 import { REFERRAL_REWARD_CENTS } from "@/lib/referrals";
+import { appendWalletEntry } from "@/lib/wallet";
 
 function makeReferralCode(): string {
   return crypto.randomBytes(4).toString("hex").toUpperCase();
@@ -93,9 +94,12 @@ export async function maybeAttributeFirstOrder(userId: string, orderId: string):
         attributedOrderId: orderId,
       },
     });
-    await tx.user.update({
-      where: { id: user.referredById! },
-      data: { walletCreditCents: { increment: existing.rewardCents } },
+    await appendWalletEntry(tx, {
+      userId: user.referredById!,
+      kind: "REFERRAL_REWARD",
+      amountCents: existing.rewardCents,
+      orderId,
+      description: `Referral reward — first paid order by ${user.id}`,
     });
     await logAudit(tx, {
       actorUserId: null,
