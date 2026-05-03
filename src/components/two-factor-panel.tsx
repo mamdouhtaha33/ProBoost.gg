@@ -68,6 +68,23 @@ export function TwoFactorPanel({ enabled, required }: Props) {
     );
   }
 
+  if (!enroll.ok || !enroll.secret) {
+    return (
+      <div className="card p-6">
+        <div className="text-sm text-[color:var(--danger)]">
+          {enroll.error ?? "Could not start enrollment."}
+        </div>
+        <button
+          type="button"
+          onClick={() => setEnroll(null)}
+          className="btn-ghost mt-4 rounded-md px-4 py-2 text-xs"
+        >
+          Back
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="card space-y-5 p-6">
       <div>

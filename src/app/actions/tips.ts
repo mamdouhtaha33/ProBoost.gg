@@ -49,6 +49,16 @@ export async function tipPro(_prev: TipState | undefined, formData: FormData): P
         where: { id: orderId },
         data: { tipAmountCents: amountCents },
       });
+      // Debit customer wallet first so the ledger is balanced; if the
+      // customer lacks credit, appendWalletEntry throws and the entire
+      // transaction rolls back.
+      await appendWalletEntry(tx, {
+        userId: session.user!.id!,
+        kind: "TIP_SENT",
+        amountCents: -amountCents,
+        orderId,
+        description: `Tip sent to Pro for order ${orderId}`,
+      });
       await appendWalletEntry(tx, {
         userId: order.proId!,
         kind: "TIP_RECEIVED",
@@ -61,6 +71,12 @@ export async function tipPro(_prev: TipState | undefined, formData: FormData): P
     const e = err as { code?: string; message?: string };
     if (e?.code === "P2002" || e?.message === "TIP_EXISTS") {
       return { ok: false, error: "Tip already left for this order." };
+    }
+    if (e?.message === "Insufficient wallet balance") {
+      return {
+        ok: false,
+        error: "Insufficient wallet balance. Top up before sending a tip.",
+      };
     }
     throw err;
   }

@@ -22,6 +22,17 @@ export type TwoFactorEnrollState = {
 
 export async function startTwoFactorEnrollment(): Promise<TwoFactorEnrollState> {
   const user = await requireUser();
+
+  const existing = await prisma.twoFactorSecret.findUnique({
+    where: { userId: user.id },
+  });
+  if (existing?.enabled) {
+    return {
+      ok: false,
+      error: "2FA is already enabled. Disable it first to re-enroll.",
+    };
+  }
+
   const secret = generateBase32Secret();
   const codes = generateRecoveryCodes();
 
