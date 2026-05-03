@@ -174,14 +174,12 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
     });
     createdId = result.id;
     createdTitle = result.title;
-    if (result.wasFree) {
-      try {
-        const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
-        await maybeAttributeFirstOrder(userId, result.id);
-      } catch (referralErr) {
-        console.error("[buyOffer] referral attribution failed", referralErr);
-      }
-    }
+    // Referral rewards are intentionally NOT granted for fully-discounted
+    // orders (coupon + wallet covered the entire price). They're earned on
+    // the first *paid* order, so a 100%-off coupon can't be used to farm
+    // $10 referral credits without the referred user actually paying.
+    // Paid orders go through markPaymentPaid, which calls
+    // maybeAttributeFirstOrder once payment is confirmed.
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.startsWith("COUPON:")) {

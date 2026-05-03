@@ -264,6 +264,18 @@ async function acceptBidById(
     if (bid.order.status !== "OPEN") {
       throw new Error("Order is not open for assignment");
     }
+    // Atomic guard: only accept a bid that is still PENDING. If a Pro
+    // withdrew or another admin already rejected it between the read and
+    // this update, the conditional updateMany returns count=0 and we abort
+    // before mutating the order. This closes the auto-assign race where a
+    // freshly-WITHDRAWN bid could otherwise be flipped back to ACCEPTED.
+    const flip = await tx.bid.updateMany({
+      where: { id: bid.id, status: "PENDING" },
+      data: { status: "ACCEPTED" },
+    });
+    if (flip.count === 0) {
+      throw new Error("Bid is no longer available for acceptance");
+    }
 
     await tx.order.update({
       where: { id: bid.orderId },
@@ -274,11 +286,6 @@ async function acceptBidById(
         status: "ASSIGNED",
         autoAssignedFromBidId: source === "auto" ? bid.id : null,
       },
-    });
-
-    await tx.bid.update({
-      where: { id: bid.id },
-      data: { status: "ACCEPTED" },
     });
 
     await tx.bid.updateMany({
@@ -383,8 +390,13 @@ async function tryAutoAssign(orderId: string): Promise<void> {
       try {
         await acceptBidById(bid.id, null, "auto");
         return;
-      } catch {
-        // race with another rule firing — skip
+      } catch (err) {
+        // If this specific bid was withdrawn / rejected between the read and
+        // the conditional accept, try the next eligible bid instead of
+        // bailing on the whole assignment. Any other error (order already
+        // assigned, etc.) means we should stop trying for this run.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === "Bid is no longer available for acceptance") continue;
         return;
       }
     }
