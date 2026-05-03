@@ -444,12 +444,45 @@ export async function becomePro() {
 }
 
 export async function markCompletedAndRecompute(orderId: string) {
-  await requireRole("ADMIN");
-  const order = await prisma.order.update({
-    where: { id: orderId },
-    data: { status: "COMPLETED" },
+  const admin = await requireRole("ADMIN");
+
+  // Only orders that are in-flight may be marked COMPLETED; preventing a
+  // CANCELLED / REFUNDED / REFUND_REVIEW order from being flipped to
+  // COMPLETED, which would inflate the Pro's completed-jobs count and
+  // distort their rank/rating via recomputeProStats.
+  const ALLOWED_FROM = new Set(["ASSIGNED", "IN_PROGRESS", "DELIVERED"]);
+
+  const order = await prisma.$transaction(async (tx) => {
+    const existing = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { status: true, proId: true },
+    });
+    if (!existing) throw new Error("Order not found");
+    if (existing.status === "COMPLETED") return existing;
+    if (!ALLOWED_FROM.has(existing.status)) {
+      throw new Error(
+        `Cannot mark a ${existing.status} order as COMPLETED.`,
+      );
+    }
+    const updated = await tx.order.update({
+      where: { id: orderId },
+      data: { status: "COMPLETED" },
+      select: { status: true, proId: true },
+    });
+    await logAudit(tx, {
+      actorUserId: admin.id,
+      action: "order.mark_completed",
+      targetType: "ORDER",
+      targetId: orderId,
+      before: { status: existing.status },
+      after: { status: "COMPLETED" },
+    });
+    return updated;
   });
+
   if (order.proId) await recomputeProStats(order.proId);
+  revalidatePath(`/dashboard/admin/orders/${orderId}`);
+  revalidatePath(`/dashboard/orders/${orderId}`);
 }
 
 function formatCents(cents: number) {

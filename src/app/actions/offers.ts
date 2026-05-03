@@ -31,24 +31,38 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
   const rl = await rateLimit(`buyOffer:${session.user.id}`, 10, 60);
   if (!rl.allowed) return { ok: false, error: "Too many orders — slow down." };
 
-  const offer = await prisma.offer.findUnique({ where: { id: offerId } });
-  if (!offer || offer.status !== "PUBLISHED") return { ok: false, error: "Offer unavailable." };
+  // Read offer once outside the transaction just to validate the request
+  // shape (deliveryMode coercion). Authoritative status/price checks happen
+  // inside the transaction below to close the TOCTOU window.
+  const offerPreview = await prisma.offer.findUnique({ where: { id: offerId } });
+  if (!offerPreview || offerPreview.status !== "PUBLISHED") {
+    return { ok: false, error: "Offer unavailable." };
+  }
 
-  const deliveryMode = (formData.get("deliveryMode") || offer.deliveryMode) as
+  const deliveryMode = (formData.get("deliveryMode") || offerPreview.deliveryMode) as
     | "PILOTED"
     | "SELF_PLAY"
     | "BOTH";
   const couponCode = String(formData.get("couponCode") ?? "").trim();
   const walletApplyCents = Math.max(0, Number.parseInt(String(formData.get("walletApplyCents") ?? "0"), 10) || 0);
 
-  const subtotal = effectivePriceCents(offer);
   const userId = session.user.id!;
-  const cashbackCategory = categoryFor(offer.productType);
 
   let couponError: string | undefined;
   let createdId: string | undefined;
+  let createdTitle: string | undefined;
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // Re-read the offer inside the transaction so an admin who archives or
+      // reprices the offer between the preview read and the order creation
+      // cannot get us to commit a stale price or sell an unavailable SKU.
+      const offer = await tx.offer.findUnique({ where: { id: offerId } });
+      if (!offer || offer.status !== "PUBLISHED") {
+        throw new Error("OFFER_UNAVAILABLE");
+      }
+      const subtotal = effectivePriceCents(offer);
+      const cashbackCategory = categoryFor(offer.productType);
+
       const dbUser = await tx.user.findUnique({
         where: { id: userId },
         select: { walletCreditCents: true, totalSpentCents: true },
@@ -156,9 +170,10 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
         });
       }
 
-      return { id: created.id, wasFree: totalCents === 0 };
+      return { id: created.id, wasFree: totalCents === 0, title: offer.title };
     });
     createdId = result.id;
+    createdTitle = result.title;
     if (result.wasFree) {
       try {
         const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
@@ -173,6 +188,14 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
       couponError = msg.slice("COUPON:".length);
     } else if (msg === "USER_NOT_FOUND") {
       return { ok: false, error: "User not found." };
+    } else if (msg === "OFFER_UNAVAILABLE") {
+      return { ok: false, error: "This offer is no longer available." };
+    } else if (msg === "Insufficient wallet balance") {
+      return {
+        ok: false,
+        error:
+          "Your wallet credit changed while we were creating the order. Reduce the wallet credit amount and try again.",
+      };
     } else {
       throw err;
     }
@@ -188,7 +211,7 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
     orderId: createdId,
     actorUserId: userId,
     type: "CREATED",
-    message: `Order placed from offer "${offer.title}"`,
+    message: `Order placed from offer "${createdTitle ?? offerPreview.title}"`,
   });
 
   // Free orders are already PAID; skip the checkout flow entirely so we don't
