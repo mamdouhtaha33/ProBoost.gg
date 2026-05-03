@@ -84,15 +84,22 @@ export async function maybeAttributeFirstOrder(userId: string, orderId: string):
     where: { referrerId: user.referredById, referredUserId: user.id },
   });
   if (!existing) return;
-  if (existing.status === "REWARD_GRANTED") return;
+  if (existing.status === "REWARD_GRANTED" || existing.status === "EXPIRED") return;
+  if (existing.expiresAt && existing.expiresAt < new Date()) return;
 
   // Atomic guard: only one concurrent caller wins the status flip from
   // PENDING -> REWARD_GRANTED. The loser sees count === 0 and bails out
   // before touching the wallet, so we cannot double-credit the referrer
-  // when two orders complete back-to-back.
+  // when two orders complete back-to-back. EXPIRED is excluded so an
+  // admin- or cron-expired referral can never resurrect into a reward.
+  const now = new Date();
   const granted = await prisma.$transaction(async (tx) => {
     const flip = await tx.referral.updateMany({
-      where: { id: existing.id, status: { not: "REWARD_GRANTED" } },
+      where: {
+        id: existing.id,
+        status: { notIn: ["REWARD_GRANTED", "EXPIRED"] },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       data: {
         status: "REWARD_GRANTED",
         attributedOrderId: orderId,

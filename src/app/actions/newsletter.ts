@@ -27,7 +27,7 @@ export async function subscribeToNewsletter(
   const unsubToken = randomBytes(16).toString("hex");
   await prisma.newsletterSubscriber.upsert({
     where: { email: emailRaw },
-    update: { status: "CONFIRMED", source, confirmedAt: new Date() },
+    update: { status: "CONFIRMED", source, confirmedAt: new Date(), unsubAt: null },
     create: { email: emailRaw, status: "CONFIRMED", source, unsubToken, confirmedAt: new Date() },
   });
 
