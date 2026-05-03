@@ -91,17 +91,67 @@ export default async function AdminDashboardPage({
             Admin Marketplace
           </h1>
         </div>
-        <Link
-          href="/dashboard/admin/applications"
-          className="btn-ghost inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs"
-        >
-          Pro applications
-          {pendingApps > 0 && (
-            <span className="rounded-full bg-[color:var(--accent)]/20 px-2 py-0.5 text-[10px] text-[color:var(--accent)]">
-              {pendingApps}
-            </span>
-          )}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/dashboard/admin/applications"
+            className="btn-ghost inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs"
+          >
+            Pro applications
+            {pendingApps > 0 && (
+              <span className="rounded-full bg-[color:var(--accent)]/20 px-2 py-0.5 text-[10px] text-[color:var(--accent)]">
+                {pendingApps}
+              </span>
+            )}
+          </Link>
+          <Link
+            href="/dashboard/admin/disputes"
+            className="btn-ghost inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs"
+          >
+            Disputes
+          </Link>
+          <Link
+            href="/dashboard/admin/analytics"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Analytics
+          </Link>
+          <Link
+            href="/dashboard/admin/auto-assignment"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Auto-assign
+          </Link>
+          <Link
+            href="/dashboard/admin/blog"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Blog
+          </Link>
+          <Link
+            href="/dashboard/admin/audit"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Audit
+          </Link>
+          <Link
+            href="/dashboard/admin/emails"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Emails
+          </Link>
+          <Link
+            href="/dashboard/admin/offers"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Offers
+          </Link>
+          <Link
+            href="/dashboard/admin/coupons"
+            className="btn-ghost rounded-md px-3 py-1.5 text-xs"
+          >
+            Coupons
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-4">

@@ -2,30 +2,32 @@
 
 import { useActionState, useMemo, useState } from "react";
 import {
-  ADDONS,
-  PLATFORMS,
-  RANKS,
-  REGIONS,
-  SERVICES,
-  computeBasePrice,
-  defaultTitle,
-  type ServiceId,
-} from "@/lib/arc-pricing";
+  computeBasePriceFor,
+  defaultOrderTitle,
+  type GameDef,
+  type GameServiceId,
+} from "@/lib/games";
 import { createOrder, type OrderActionState } from "@/app/actions/orders";
 import { formatPrice } from "@/lib/utils";
-import { Crosshair, Sparkles, Zap } from "lucide-react";
+import { Crosshair } from "lucide-react";
 
 type Props = {
-  initialService?: ServiceId;
+  game: GameDef;
+  initialService?: GameServiceId;
   isAuthed: boolean;
 };
 
-export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
-  const [service, setService] = useState<ServiceId>(initialService);
-  const [region, setRegion] = useState<string>("na-east");
-  const [platform, setPlatform] = useState<string>("pc");
-  const [currentRank, setCurrentRank] = useState<string>("scavenger");
-  const [targetRank, setTargetRank] = useState<string>("apex");
+export function ServicesForm({ game, initialService = "boosting", isAuthed }: Props) {
+  const services = Object.keys(game.services) as GameServiceId[];
+  const [service, setService] = useState<GameServiceId>(
+    services.includes(initialService) ? initialService : services[0],
+  );
+  const [region, setRegion] = useState<string>(game.regions[0]?.id ?? "");
+  const [platform, setPlatform] = useState<string>(game.platforms[0]?.id ?? "pc");
+  const [currentRank, setCurrentRank] = useState<string>(game.ranks[0]?.id ?? "");
+  const [targetRank, setTargetRank] = useState<string>(
+    game.ranks[game.ranks.length - 1]?.id ?? "",
+  );
   const [hours, setHours] = useState<number>(2);
   const [runs, setRuns] = useState<number>(3);
   const [addons, setAddons] = useState<string[]>([]);
@@ -34,8 +36,8 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
   const opts = useMemo(
     () => ({
       service,
-      region: region as "na-east",
-      platform: platform as "pc",
+      region,
+      platform,
       currentRank,
       targetRank,
       hours,
@@ -46,8 +48,8 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
     [service, region, platform, currentRank, targetRank, hours, runs, addons, notes],
   );
 
-  const price = computeBasePrice(opts);
-  const title = defaultTitle(opts);
+  const price = computeBasePriceFor(game, opts);
+  const title = defaultOrderTitle(game, opts);
 
   const [state, formAction, pending] = useActionState<OrderActionState, FormData>(
     createOrder,
@@ -60,14 +62,20 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
     );
   };
 
+  const serviceLabel: Record<GameServiceId, string> = {
+    boosting: "Rank Boosting",
+    coaching: "Pro Coaching",
+    carry: "Carry & Co-op",
+  };
+
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
-      {/* CONFIG */}
       <form action={formAction} className="card space-y-8 p-6">
-        {/* Service tabs */}
         <input type="hidden" name="service" value={service} />
+        <input type="hidden" name="gameSlug" value={game.slug} />
+
         <div className="flex flex-wrap gap-2">
-          {(Object.keys(SERVICES) as ServiceId[]).map((id) => {
+          {services.map((id) => {
             const active = id === service;
             return (
               <button
@@ -76,25 +84,22 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
                 onClick={() => setService(id)}
                 className={
                   "rounded-md px-4 py-2 text-sm font-medium transition-colors " +
-                  (active
-                    ? "btn-primary"
-                    : "btn-ghost")
+                  (active ? "btn-primary" : "btn-ghost")
                 }
               >
-                {SERVICES[id].name.replace("ARC Raiders: ", "")}
+                {serviceLabel[id]}
               </button>
             );
           })}
         </div>
 
         <div>
-          <h2 className="text-xl font-semibold">{SERVICES[service].name}</h2>
-          <p className="mt-1 text-sm text-[color:var(--muted)]">
-            {SERVICES[service].blurb}
-          </p>
+          <h2 className="text-xl font-semibold">
+            {game.name}: {serviceLabel[service]}
+          </h2>
+          <p className="mt-1 text-sm text-[color:var(--muted)]">{game.tagline}</p>
         </div>
 
-        {/* Region & platform — common */}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Region">
             <select
@@ -103,7 +108,7 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
               value={region}
               onChange={(e) => setRegion(e.target.value)}
             >
-              {REGIONS.map((r) => (
+              {game.regions.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.label}
                 </option>
@@ -117,7 +122,7 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
               value={platform}
               onChange={(e) => setPlatform(e.target.value)}
             >
-              {PLATFORMS.map((p) => (
+              {game.platforms.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.label}
                 </option>
@@ -126,7 +131,6 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
           </Field>
         </div>
 
-        {/* Service-specific fields */}
         {service === "boosting" && (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Current rank">
@@ -136,7 +140,7 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
                 value={currentRank}
                 onChange={(e) => setCurrentRank(e.target.value)}
               >
-                {RANKS.map((r) => (
+                {game.ranks.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.label}
                   </option>
@@ -150,11 +154,13 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
                 value={targetRank}
                 onChange={(e) => setTargetRank(e.target.value)}
               >
-                {RANKS.map((r) => (
+                {game.ranks.map((r) => (
                   <option
                     key={r.id}
                     value={r.id}
-                    disabled={r.tier <= (RANKS.find((x) => x.id === currentRank)?.tier ?? 0)}
+                    disabled={
+                      r.tier <= (game.ranks.find((x) => x.id === currentRank)?.tier ?? 0)
+                    }
                   >
                     {r.label}
                   </option>
@@ -173,7 +179,9 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
               max={20}
               className="input-base"
               value={hours}
-              onChange={(e) => setHours(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+              onChange={(e) =>
+                setHours(Math.max(1, Math.min(20, Number(e.target.value) || 1)))
+              }
             />
           </Field>
         )}
@@ -187,16 +195,17 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
               max={20}
               className="input-base"
               value={runs}
-              onChange={(e) => setRuns(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+              onChange={(e) =>
+                setRuns(Math.max(1, Math.min(20, Number(e.target.value) || 1)))
+              }
             />
           </Field>
         )}
 
-        {/* Add-ons */}
         <div>
           <div className="mb-2 text-sm font-medium">Add-ons</div>
           <div className="grid gap-2 sm:grid-cols-2">
-            {ADDONS.map((a) => {
+            {game.addons.map((a) => {
               const active = addons.includes(a.id);
               return (
                 <label
@@ -204,7 +213,7 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
                   className={
                     "flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5 text-sm transition-colors " +
                     (active
-                      ? "border-[color:var(--primary)] bg-[#1a1208]"
+                      ? "border-[color:var(--primary)] bg-[#0c1626]"
                       : "border-[color:var(--border)] bg-[#0a0d15] hover:border-[#2a3045]")
                   }
                 >
@@ -220,7 +229,7 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
                     {a.label}
                   </span>
                   <span className="font-mono text-xs text-[color:var(--muted)]">
-                    +{formatPrice(a.price)}
+                    +{formatPrice(a.priceCents)}
                   </span>
                 </label>
               );
@@ -228,7 +237,6 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
           </div>
         </div>
 
-        {/* Notes */}
         <Field label="Notes for the Pro (optional)">
           <textarea
             name="notes"
@@ -236,7 +244,7 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             className="input-base resize-none"
-            placeholder="Anything the Pro should know? Preferred times, account details after assignment, etc."
+            placeholder="Preferred times, account details, special requests…"
           />
         </Field>
 
@@ -264,7 +272,6 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
         )}
       </form>
 
-      {/* SUMMARY */}
       <aside className="space-y-4">
         <div className="card sticky top-20 p-6">
           <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-[color:var(--muted)]">
@@ -273,17 +280,27 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
           </div>
           <div className="mt-3 text-lg font-semibold">{title}</div>
           <div className="mt-1 text-sm text-[color:var(--muted)]">
-            {REGIONS.find((r) => r.id === region)?.label} · {PLATFORMS.find((p) => p.id === platform)?.label}
+            {game.regions.find((r) => r.id === region)?.label} ·{" "}
+            {game.platforms.find((p) => p.id === platform)?.label}
           </div>
 
           <div className="my-5 h-px bg-[color:var(--border)]" />
 
           <div className="space-y-2 text-sm">
-            <Row label="Base service" value={formatPrice(price - addons.reduce((s, id) => s + (ADDONS.find((a) => a.id === id)?.price ?? 0), 0))} />
+            <Row
+              label="Base service"
+              value={formatPrice(
+                price -
+                  addons.reduce(
+                    (s, id) => s + (game.addons.find((a) => a.id === id)?.priceCents ?? 0),
+                    0,
+                  ),
+              )}
+            />
             {addons.map((id) => {
-              const a = ADDONS.find((x) => x.id === id);
+              const a = game.addons.find((x) => x.id === id);
               if (!a) return null;
-              return <Row key={id} label={a.label} value={`+${formatPrice(a.price)}`} />;
+              return <Row key={id} label={a.label} value={`+${formatPrice(a.priceCents)}`} />;
             })}
           </div>
 
@@ -293,18 +310,7 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
             <div className="text-xs uppercase tracking-wider text-[color:var(--muted)]">
               Estimated price
             </div>
-            <div className="text-3xl font-semibold text-gradient">
-              {formatPrice(price)}
-            </div>
-          </div>
-
-          <div className="mt-4 space-y-2 text-xs text-[color:var(--muted)]">
-            <Tip icon={<Sparkles className="size-3.5 text-[color:var(--accent)]" />}>
-              Pros may bid below this estimate — final price is the accepted bid.
-            </Tip>
-            <Tip icon={<Zap className="size-3.5 text-[color:var(--primary)]" />}>
-              Most orders get their first bid within minutes.
-            </Tip>
+            <div className="text-3xl font-semibold text-gradient">{formatPrice(price)}</div>
           </div>
         </div>
       </aside>
@@ -312,16 +318,12 @@ export function ServicesForm({ initialService = "boosting", isAuthed }: Props) {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-sm font-medium">{label}</span>
+      <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-[color:var(--muted)]">
+        {label}
+      </div>
       {children}
     </label>
   );
@@ -329,18 +331,9 @@ function Field({
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex justify-between text-sm">
       <span className="text-[color:var(--muted)]">{label}</span>
       <span className="font-mono">{value}</span>
-    </div>
-  );
-}
-
-function Tip({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-2">
-      <span className="mt-0.5 shrink-0">{icon}</span>
-      <span>{children}</span>
     </div>
   );
 }

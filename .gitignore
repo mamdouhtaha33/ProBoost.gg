@@ -37,6 +37,13 @@ yarn-error.log*
 # local screenshot artifacts (kept out of repo; embedded in PR description only)
 .docs-*.png
 
+# local test artifacts (not part of repo)
+TEST_PLAN.md
+test-e2e.mjs
+TESTING_RESULTS*.md
+.docs-screenshots/
+.test-recordings/
+
 # vercel
 .vercel
 
@@ -45,3 +52,4 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+test-report.md

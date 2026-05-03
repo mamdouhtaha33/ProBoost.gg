@@ -31,11 +31,24 @@ export default async function DashboardOverviewPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">My Dashboard</h1>
-        <p className="mt-1 text-sm text-[color:var(--muted)]">
-          Track your orders, see incoming bids, and manage your services.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">My Dashboard</h1>
+          <p className="mt-1 text-sm text-[color:var(--muted)]">
+            Track your orders, see incoming bids, and manage your services.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Link href="/dashboard/disputes" className="btn-ghost rounded-md px-3 py-1.5">
+            Disputes
+          </Link>
+          <Link href="/dashboard/referrals" className="btn-ghost rounded-md px-3 py-1.5">
+            Referrals
+          </Link>
+          <Link href="/settings/two-factor" className="btn-ghost rounded-md px-3 py-1.5">
+            Security
+          </Link>
+        </div>
       </div>
 
       {applied === "1" && (

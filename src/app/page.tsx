@@ -9,13 +9,34 @@ import {
   Users,
   Lock,
   ArrowRight,
+  Flame,
 } from "lucide-react";
+import { listPublishedOffers } from "@/lib/offers";
+import { OfferCard } from "@/components/offer-card";
+import { TrustBar } from "@/components/trust-bar";
+import { NewsletterForm } from "@/components/newsletter-form";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const [hot, popular] = await Promise.all([
+    listPublishedOffers({ hot: true, limit: 4 }),
+    listPublishedOffers({ popular: true, limit: 4 }),
+  ]);
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6">
+      {/* SALE BANNER */}
+      <div className="mt-4 flex items-center justify-between rounded-lg border border-rose-500/30 bg-gradient-to-r from-rose-500/10 to-orange-500/10 px-5 py-3 text-sm">
+        <div className="flex items-center gap-2">
+          <Flame className="size-4 text-rose-300" />
+          <span className="font-semibold">Spring Sale —</span>
+          <span className="text-[color:var(--muted)]">up to 30% off select offers</span>
+        </div>
+        <Link href="/offers" className="text-rose-300 hover:underline">Shop now →</Link>
+      </div>
+
       {/* HERO */}
-      <section className="relative pt-16 pb-24">
+      <section className="relative pt-16 pb-12">
         <div className="grid gap-10 lg:grid-cols-2 lg:items-center">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--border)] bg-[#0d1018] px-3 py-1 text-xs text-[color:var(--muted)]">
@@ -127,6 +148,59 @@ export default function Home() {
         </div>
       </section>
 
+      {/* TRUST BAR with live counters */}
+      <div className="-mx-4 sm:-mx-6">
+        <TrustBar />
+      </div>
+
+      {/* HOT OFFERS */}
+      {hot.length > 0 && (
+        <section className="py-12">
+          <div className="mb-6 flex items-end justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-orange-400">
+                <Flame className="mr-1 inline size-3.5" /> Hot right now
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
+                Top offers this week
+              </h2>
+            </div>
+            <Link href="/offers" className="text-sm text-[color:var(--muted)] hover:text-white">
+              All offers →
+            </Link>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {hot.map((o) => (
+              <OfferCard key={o.id} offer={o} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* POPULAR */}
+      {popular.length > 0 && (
+        <section className="pb-12">
+          <div className="mb-6 flex items-end justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-[color:var(--primary)]">
+                Customer favorites
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
+                Popular offers
+              </h2>
+            </div>
+            <Link href="/offers" className="text-sm text-[color:var(--muted)] hover:text-white">
+              All offers →
+            </Link>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {popular.map((o) => (
+              <OfferCard key={o.id} offer={o} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* TRUST */}
       <section className="grid gap-4 pb-12 sm:grid-cols-2 lg:grid-cols-4">
         {[
@@ -141,6 +215,17 @@ export default function Home() {
             <p className="mt-1 text-sm text-[color:var(--muted)]">{f.d}</p>
           </div>
         ))}
+      </section>
+
+      {/* NEWSLETTER */}
+      <section className="card mb-12 grid gap-6 p-8 lg:grid-cols-3 lg:items-center">
+        <div className="lg:col-span-2">
+          <h3 className="text-2xl font-semibold tracking-tight">Hidden promo codes — straight to your inbox.</h3>
+          <p className="mt-2 text-sm text-[color:var(--muted)]">
+            Subscribe and get exclusive cashback boosts, sale alerts, and a -10% promo code on signup.
+          </p>
+        </div>
+        <NewsletterForm source="home-hero" />
       </section>
 
       {/* HOW IT WORKS */}

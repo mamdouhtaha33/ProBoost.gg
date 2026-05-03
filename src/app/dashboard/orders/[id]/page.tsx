@@ -13,6 +13,7 @@ import { OrderTimeline } from "@/components/order-timeline";
 import { OrderChat } from "@/components/order-chat";
 import { RefundForm } from "@/components/refund-form";
 import { ReviewForm } from "@/components/review-form";
+import { TipForm } from "@/components/tip-form";
 import { ArrowLeft, Star } from "lucide-react";
 
 export default async function CustomerOrderPage({
@@ -34,6 +35,7 @@ export default async function CustomerOrderPage({
       },
       payment: true,
       review: true,
+      tip: true,
       conversation: {
         include: {
           messages: {
@@ -216,6 +218,23 @@ export default async function CustomerOrderPage({
               <ReviewForm orderId={order.id} />
             </div>
           )}
+        </section>
+      )}
+
+      {order.status === "COMPLETED" && order.proId && (
+        <section>
+          <TipForm
+            orderId={order.id}
+            alreadyTipped={Boolean(order.tip)}
+            walletBalanceCents={
+              (
+                await prisma.user.findUnique({
+                  where: { id: session.user.id },
+                  select: { walletCreditCents: true },
+                })
+              )?.walletCreditCents ?? 0
+            }
+          />
         </section>
       )}
     </div>
