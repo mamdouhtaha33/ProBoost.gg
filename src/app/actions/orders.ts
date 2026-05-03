@@ -382,7 +382,14 @@ async function tryAutoAssign(orderId: string): Promise<void> {
   for (const rule of rules) {
     const minMatch = rankAtLeast(rule.minProRank);
     for (const bid of order.bids) {
-      const pct = Math.round((bid.amount / order.basePrice) * 100);
+      // Guard against zero/negative basePrice (free SKUs, misconfigured
+      // offers). Treat the bid percentage as 100% so the rule's
+      // min/maxBidPercent thresholds still gate correctly instead of
+      // producing Infinity which would silently disqualify every bid.
+      const pct =
+        order.basePrice > 0
+          ? Math.round((bid.amount / order.basePrice) * 100)
+          : 100;
       if (pct < rule.minBidPercent) continue;
       if (pct > rule.maxBidPercent) continue;
       if (rule.requireProVerified && !bid.pro.proVerified) continue;

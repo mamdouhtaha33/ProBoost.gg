@@ -136,10 +136,11 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
         },
       });
       await tx.conversation.create({ data: { orderId: created.id } });
-      await tx.offer.update({
-        where: { id: offer.id },
-        data: { ordersCount: { increment: 1 } },
-      });
+      // Offer.ordersCount is only bumped once the order is actually paid
+      // (markPaymentPaid). The free-order branch below increments inline
+      // because $0 orders skip markPaymentPaid entirely. This keeps the
+      // popularity counter aligned with completed/paid revenue rather
+      // than abandoned checkouts.
 
       // Wallet debit, coupon redemption, and cashback credit are deferred
       // to markPaymentPaid for non-free orders so an abandoned checkout
@@ -150,6 +151,10 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
       // time. Free orders ($0 — coupon + wallet covered the price) skip
       // markPaymentPaid entirely, so we apply the side effects inline.
       if (totalCents === 0) {
+        await tx.offer.update({
+          where: { id: offer.id },
+          data: { ordersCount: { increment: 1 } },
+        });
         if (walletApplied > 0) {
           await appendWalletEntry(tx, {
             userId,

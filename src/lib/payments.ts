@@ -481,6 +481,17 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
       }
     }
 
+    // Bump the offer's popularity counter only once payment is actually
+    // confirmed, so abandoned checkouts can't inflate the displayed
+    // ordersCount or affect popularity ordering. The atomic flip above
+    // ensures this runs exactly once per order, even on webhook retries.
+    if (order.offerId) {
+      await tx.offer.update({
+        where: { id: order.offerId },
+        data: { ordersCount: { increment: 1 } },
+      });
+    }
+
     await tx.transaction.create({
       data: {
         orderId,
