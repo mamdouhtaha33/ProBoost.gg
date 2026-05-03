@@ -160,8 +160,12 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
     });
     createdId = result.id;
     if (result.wasFree) {
-      const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
-      await maybeAttributeFirstOrder(userId, result.id);
+      try {
+        const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
+        await maybeAttributeFirstOrder(userId, result.id);
+      } catch (referralErr) {
+        console.error("[buyOffer] referral attribution failed", referralErr);
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

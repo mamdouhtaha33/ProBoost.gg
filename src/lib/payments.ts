@@ -391,8 +391,12 @@ export async function markPaymentPaid(orderId: string, providerRef?: string) {
   });
 
   if (!result.alreadyPaid && result.customerId) {
-    const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
-    await maybeAttributeFirstOrder(result.customerId, orderId);
+    try {
+      const { maybeAttributeFirstOrder } = await import("@/app/actions/referrals");
+      await maybeAttributeFirstOrder(result.customerId, orderId);
+    } catch (referralErr) {
+      console.error("[markPaymentPaid] referral attribution failed", referralErr);
+    }
   }
 
   return { alreadyPaid: result.alreadyPaid, payment: result.payment };
