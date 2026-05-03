@@ -9,6 +9,7 @@ import { evaluateCoupon } from "@/lib/coupons";
 import { computeCashbackFor } from "@/lib/cashback";
 import { appendWalletEntry } from "@/lib/wallet";
 import { effectivePriceCents } from "@/lib/offers";
+import { getGameBySlug } from "@/lib/games";
 import type { CashbackCategory, ProductType } from "@prisma/client";
 
 export type BuyOfferState = {
@@ -105,13 +106,20 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
         amountCents: totalCents,
       });
 
+      // The Order.game column is the human-readable display name (e.g.
+      // "ARC Raiders") and is rendered as-is in admin disputes,
+      // testimonials, and Pro profile reviews. Resolve it from the slug so
+      // offer-based purchases match what /services places via createOrder.
+      const gameDef = getGameBySlug(offer.gameSlug);
+      const gameDisplayName = gameDef?.name ?? offer.gameSlug;
+
       const created = await tx.order.create({
         data: {
           customerId: userId,
           title: offer.title,
           description: offer.summary ?? offer.title,
           service: offer.service,
-          game: offer.gameSlug,
+          game: gameDisplayName,
           gameSlug: offer.gameSlug,
           productType: offer.productType,
           offerId: offer.id,
