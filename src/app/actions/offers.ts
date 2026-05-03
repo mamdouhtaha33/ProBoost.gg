@@ -191,5 +191,14 @@ export async function buyOffer(_prev: BuyOfferState | undefined, formData: FormD
     message: `Order placed from offer "${offer.title}"`,
   });
 
+  // Free orders are already PAID; skip the checkout flow entirely so we don't
+  // create a stray Payment row for an order that needs no payment.
+  const created = await prisma.order.findUnique({
+    where: { id: createdId },
+    select: { paymentStatus: true },
+  });
+  if (created?.paymentStatus === "PAID") {
+    redirect(`/dashboard/orders/${createdId}`);
+  }
   redirect(`/checkout/${createdId}`);
 }
