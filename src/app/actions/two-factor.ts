@@ -92,6 +92,12 @@ export async function confirmTwoFactor(
 
 export async function disableTwoFactor(): Promise<void> {
   const user = await requireUser();
+  // Mirror the UI policy at the server layer: admins must keep 2FA enabled.
+  // The UI hides the disable button for admins, but a crafted request would
+  // otherwise bypass that. requireUser returns the role from the session.
+  if (user.role === "ADMIN") {
+    throw new Error("Admins cannot disable 2FA. Contact security@proboost.gg.");
+  }
   await prisma.$transaction(async (tx) => {
     await tx.twoFactorSecret.deleteMany({ where: { userId: user.id } });
     await tx.user.update({

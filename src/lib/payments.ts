@@ -406,6 +406,16 @@ export async function markPaymentFailed(
   orderId: string,
   errorMessage: string,
 ) {
+  // Idempotency guard: never downgrade a PAID payment back to FAILED. If a
+  // failure webhook arrives after a successful one (provider retry, race
+  // between IPN events, etc.) we ignore it so we don't end up with a FAILED
+  // payment but already-incremented totalSpentCents / credited cashback.
+  const existing = await prisma.payment.findUnique({ where: { orderId } });
+  if (!existing) return { skipped: true as const, reason: "no-payment" };
+  if (existing.status === "PAID") {
+    return { skipped: true as const, reason: "already-paid" };
+  }
+
   await prisma.payment.update({
     where: { orderId },
     data: {
@@ -423,4 +433,5 @@ export async function markPaymentFailed(
     message: `Payment failed: ${errorMessage}`,
     visibleToPro: false,
   });
+  return { skipped: false as const };
 }
