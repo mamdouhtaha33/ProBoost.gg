@@ -277,8 +277,17 @@ async function acceptBidById(
       throw new Error("Bid is no longer available for acceptance");
     }
 
-    await tx.order.update({
-      where: { id: bid.orderId },
+    // Atomic guard mirroring the bid flip above: only assign the order
+    // if it is still OPEN. Two concurrent acceptBidById calls (very
+    // realistic now that placeBid auto-triggers tryAutoAssign on every
+    // new bid) could both pass the read at line 264 and both flip
+    // different bids to ACCEPTED. Without this conditional, T2 would
+    // overwrite T1's proId/acceptedBidId/finalPrice while T1's pro still
+    // sees ACCEPTED — two pros believe they own the order. count === 0
+    // means another transaction already assigned it; we throw so the
+    // tx (including the bid flip) rolls back.
+    const orderFlip = await tx.order.updateMany({
+      where: { id: bid.orderId, status: "OPEN" },
       data: {
         proId: bid.proId,
         acceptedBidId: bid.id,
@@ -287,6 +296,9 @@ async function acceptBidById(
         autoAssignedFromBidId: source === "auto" ? bid.id : null,
       },
     });
+    if (orderFlip.count === 0) {
+      throw new Error("Order is no longer open for assignment");
+    }
 
     await tx.bid.updateMany({
       where: {

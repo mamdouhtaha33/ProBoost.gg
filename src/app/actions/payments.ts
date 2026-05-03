@@ -45,6 +45,12 @@ export async function startCheckout(
 
   const amount = order.finalPrice ?? order.basePrice;
   const origin = getSiteOrigin();
+  // Build the checkout session inside try/catch so a provider failure
+  // surfaces as a friendly error, but call redirect() OUTSIDE the catch.
+  // Next.js implements redirect() by throwing a NEXT_REDIRECT error;
+  // catching it would swallow the navigation and show the user a fake
+  // "Checkout failed" message instead of sending them to the provider.
+  let checkoutUrl: string;
   try {
     const result = await createCheckoutSession({
       orderId,
@@ -53,13 +59,14 @@ export async function startCheckout(
       successUrl: `${origin}/checkout/success?orderId=${orderId}`,
       cancelUrl: `${origin}/checkout/${orderId}`,
     });
-    redirect(result.checkoutUrl);
+    checkoutUrl = result.checkoutUrl;
   } catch (err) {
     return {
       ok: false,
       error: err instanceof Error ? err.message : "Checkout failed",
     };
   }
+  redirect(checkoutUrl);
 }
 
 export async function confirmManualPayment(formData: FormData) {
